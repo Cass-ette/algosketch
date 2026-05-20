@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/algosketch-core",
+    "crates/algosketch-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.78"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Cass-ette/algosketch"
+authors = ["Cass-ette"]
+
+[workspace.dependencies]
+thiserror = "1"

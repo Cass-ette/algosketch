@@ -1,0 +1,16 @@
+[package]
+name = "algosketch-cli"
+description = "Command-line interface for algosketch."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "algosketch"
+path = "src/main.rs"
+
+[dependencies]
+algosketch-core = { path = "../algosketch-core", version = "0.0.0" }

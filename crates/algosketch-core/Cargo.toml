@@ -1,0 +1,12 @@
+[package]
+name = "algosketch-core"
+description = "Core library for algosketch: parses real source code (Python / Java / C++) into a unified IR and renders it as pseudocode and natural-language explanations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
