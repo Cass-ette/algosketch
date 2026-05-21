@@ -24,6 +24,12 @@ impl PseudoRenderer {
         out
     }
 
+    pub fn render_function(&self, f: &Function) -> String {
+        let mut out = String::new();
+        self.render_function_into(f, &mut out);
+        out
+    }
+
     fn indent_step(&self) -> usize {
         if self.indent_width == 0 {
             4
@@ -34,7 +40,7 @@ impl PseudoRenderer {
 
     fn render_item(&self, item: &Item, out: &mut String) {
         match item {
-            Item::Function(f) => self.render_function(f, out),
+            Item::Function(f) => self.render_function_into(f, out),
             Item::Class(_) | Item::Import(_) | Item::GlobalVar(_) => {}
             Item::Raw(text) => {
                 out.push_str(text);
@@ -45,7 +51,7 @@ impl PseudoRenderer {
         }
     }
 
-    fn render_function(&self, f: &Function, out: &mut String) {
+    fn render_function_into(&self, f: &Function, out: &mut String) {
         let params = f
             .params
             .iter()

@@ -3,8 +3,9 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use algosketch_core::ir::Item;
 use algosketch_core::parser::{LanguageParser, PythonParser};
-use algosketch_core::renderer::PseudoRenderer;
+use algosketch_core::renderer::{ExplainRenderer, PseudoRenderer};
 use algosketch_core::{NaturalLang, PseudoError, SourceLang};
 use clap::{Parser, ValueEnum};
 
@@ -78,8 +79,6 @@ enum NaturalLangArg {
     Auto,
 }
 
-// Wired by the CLI flag in Task 11.
-#[allow(dead_code)]
 fn resolve_natural_lang(arg: NaturalLangArg) -> NaturalLang {
     match arg {
         NaturalLangArg::Zh => NaturalLang::Zh,
@@ -88,8 +87,6 @@ fn resolve_natural_lang(arg: NaturalLangArg) -> NaturalLang {
     }
 }
 
-// Wired by the CLI flag in Task 11.
-#[allow(dead_code)]
 fn detect_locale() -> NaturalLang {
     if let Ok(val) = std::env::var("PSEUDOCODE_LANG") {
         if val.starts_with("zh") {
@@ -135,16 +132,55 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
         }
     };
 
-    let pseudocode = PseudoRenderer {
+    let natural_lang = resolve_natural_lang(cli.lang);
+    let pseudo_renderer = PseudoRenderer {
         indent_width: cli.indent,
-    }
-    .render_module(&module);
-
-    let output = if cli.format == OutFormat::Md {
-        format!("### Pseudocode\n\n```text\n{pseudocode}```\n")
-    } else {
-        pseudocode
     };
+    let explain_renderer = ExplainRenderer::new(natural_lang);
+
+    let show_pseudo = !cli.no_pseudo;
+    let show_explain = !cli.no_explain;
+
+    let mut sections = Vec::new();
+
+    for item in &module.items {
+        if let Item::Function(f) = item {
+            let mut func_output = String::new();
+
+            if cli.format == OutFormat::Md {
+                func_output.push_str(&format!("## {}\n\n", f.name));
+            }
+
+            if show_pseudo {
+                let pseudo = pseudo_renderer.render_function(f);
+                if cli.format == OutFormat::Md {
+                    if show_explain {
+                        func_output.push_str("### Pseudocode\n\n");
+                    }
+                    func_output.push_str(&format!("```text\n{pseudo}```\n\n"));
+                } else {
+                    func_output.push_str(&pseudo);
+                }
+            }
+
+            if show_explain {
+                let explain = explain_renderer.render_function(f);
+                if cli.format == OutFormat::Md {
+                    let title = match natural_lang {
+                        NaturalLang::Zh => "### 解释\n\n",
+                        NaturalLang::En => "### Explanation\n\n",
+                    };
+                    func_output.push_str(title);
+                }
+                func_output.push_str(&explain);
+                func_output.push('\n');
+            }
+
+            sections.push(func_output);
+        }
+    }
+
+    let output = sections.join("\n");
 
     if let Some(path) = cli.output {
         fs::write(path, output)?;
