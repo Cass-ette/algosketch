@@ -31,9 +31,7 @@ impl ExplainRenderer {
                 then_block,
                 else_block,
                 ..
-            } => {
-                self.has_loop(then_block) || else_block.as_ref().map_or(false, |b| self.has_loop(b))
-            }
+            } => self.has_loop(then_block) || else_block.as_ref().is_some_and(|b| self.has_loop(b)),
             Stmt::While { .. } | Stmt::For { .. } => true,
             _ => false,
         }
@@ -63,7 +61,7 @@ impl ExplainRenderer {
             Stmt::VarDecl(v) => v
                 .init
                 .as_ref()
-                .map_or(false, |e| self.expr_calls_function(e, fname)),
+                .is_some_and(|e| self.expr_calls_function(e, fname)),
             Stmt::If {
                 then_block,
                 else_block,
@@ -72,7 +70,7 @@ impl ExplainRenderer {
                 self.block_calls_function(then_block, fname)
                     || else_block
                         .as_ref()
-                        .map_or(false, |b| self.block_calls_function(b, fname))
+                        .is_some_and(|b| self.block_calls_function(b, fname))
             }
             Stmt::While { body, .. } | Stmt::For { body, .. } => {
                 self.block_calls_function(body, fname)
