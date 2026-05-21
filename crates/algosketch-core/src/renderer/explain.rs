@@ -8,7 +8,6 @@ pub struct ExplainRenderer {
     pub lang: NaturalLang,
 }
 
-#[allow(dead_code)]
 impl ExplainRenderer {
     pub fn new(lang: NaturalLang) -> Self {
         Self { lang }
@@ -18,6 +17,8 @@ impl ExplainRenderer {
         String::new()
     }
 
+    // Used by render_function in Task 7; kept private until then.
+    #[allow(dead_code)]
     fn detect_purpose(&self, f: &Function) -> String {
         let name_lower = f.name.to_lowercase();
         let has_loop = self.has_loop(&f.body);
@@ -137,6 +138,7 @@ impl ExplainRenderer {
     }
 }
 
+// Used by statement templates in Task 7; kept private until then.
 #[allow(dead_code)]
 fn expr_to_text(expr: &Expr) -> String {
     match expr {
@@ -159,6 +161,7 @@ fn expr_to_text(expr: &Expr) -> String {
     }
 }
 
+// Used by statement templates in Task 7; kept private until then.
 #[allow(dead_code)]
 fn render_binary_operand(expr: &Expr) -> String {
     match expr {
@@ -167,6 +170,7 @@ fn render_binary_operand(expr: &Expr) -> String {
     }
 }
 
+// Used by statement templates in Task 7; kept private until then.
 #[allow(dead_code)]
 fn render_call(callee: &Expr, args: &[Expr]) -> String {
     if let Expr::Ident(name) = callee {
@@ -183,6 +187,7 @@ fn render_call(callee: &Expr, args: &[Expr]) -> String {
     format!("{}({})", expr_to_text(callee), args_str)
 }
 
+// Used by statement templates in Task 7; kept private until then.
 #[allow(dead_code)]
 fn render_literal(lit: &Literal) -> String {
     match lit {
@@ -194,6 +199,7 @@ fn render_literal(lit: &Literal) -> String {
     }
 }
 
+// Used by statement templates in Task 7; kept private until then.
 #[allow(dead_code)]
 fn render_binop(op: BinOp) -> &'static str {
     match op {
@@ -219,6 +225,7 @@ fn render_binop(op: BinOp) -> &'static str {
     }
 }
 
+// Used by statement templates in Task 7; kept private until then.
 #[allow(dead_code)]
 fn render_unop(op: UnOp) -> &'static str {
     match op {
