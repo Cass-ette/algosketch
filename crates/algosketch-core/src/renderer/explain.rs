@@ -13,13 +13,27 @@ impl ExplainRenderer {
         Self { lang }
     }
 
-    pub fn render_module(&self, _module: &Module) -> String {
-        String::new()
+    pub fn render_module(&self, module: &Module) -> String {
+        let mut out = String::new();
+        for item in &module.items {
+            if let Item::Function(f) = item {
+                out.push_str(&self.render_steps(&f.body, 1));
+            }
+        }
+        out
     }
 
-    // Used by render_function in later tasks; kept private until then.
-    #[allow(dead_code)]
-    fn render_stmt(&self, stmt: &Stmt, _depth: usize, out: &mut String) {
+    fn render_steps(&self, block: &Block, depth: usize) -> String {
+        let mut out = String::new();
+        for (i, stmt) in block.0.iter().enumerate() {
+            let indent = "  ".repeat(depth);
+            out.push_str(&format!("{}{}. ", indent, i + 1));
+            self.render_stmt(stmt, depth, &mut out);
+        }
+        out
+    }
+
+    fn render_stmt(&self, stmt: &Stmt, depth: usize, out: &mut String) {
         match stmt {
             Stmt::Assign { target, value } => {
                 let line = match self.lang {
@@ -82,8 +96,109 @@ impl ExplainRenderer {
                 };
                 out.push_str(&format!("{}\n", line));
             }
-            // Control flow statement rendering is deferred to the next task.
-            _ => {}
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                let line = match self.lang {
+                    NaturalLang::Zh => format!("如果 {}，则：", expr_to_text(cond)),
+                    NaturalLang::En => format!("If {}, then:", expr_to_text(cond)),
+                };
+                out.push_str(&format!("{}\n", line));
+                out.push_str(&self.render_steps(then_block, depth + 1));
+                if let Some(else_block) = else_block {
+                    self.render_else(else_block, depth, out);
+                }
+            }
+            Stmt::While { cond, body } => {
+                let line = match self.lang {
+                    NaturalLang::Zh => format!("当 {} 时重复以下步骤：", expr_to_text(cond)),
+                    NaturalLang::En => format!("While {}, repeat:", expr_to_text(cond)),
+                };
+                out.push_str(&format!("{}\n", line));
+                out.push_str(&self.render_steps(body, depth + 1));
+            }
+            Stmt::For { kind, body } => {
+                let line = self.render_for_header(kind);
+                out.push_str(&format!("{}\n", line));
+                out.push_str(&self.render_steps(body, depth + 1));
+            }
+        }
+    }
+
+    fn render_else(&self, else_block: &Block, depth: usize, out: &mut String) {
+        let indent = "  ".repeat(depth);
+        if let [Stmt::If {
+            cond,
+            then_block,
+            else_block: nested_else,
+        }] = else_block.0.as_slice()
+        {
+            let line = match self.lang {
+                NaturalLang::Zh => format!("否则如果 {}，则：", expr_to_text(cond)),
+                NaturalLang::En => format!("Otherwise if {}, then:", expr_to_text(cond)),
+            };
+            out.push_str(&format!("{}{}\n", indent, line));
+            out.push_str(&self.render_steps(then_block, depth + 1));
+            if let Some(nested) = nested_else {
+                self.render_else(nested, depth, out);
+            }
+        } else {
+            let line = match self.lang {
+                NaturalLang::Zh => "否则：",
+                NaturalLang::En => "Otherwise:",
+            };
+            out.push_str(&format!("{}{}\n", indent, line));
+            out.push_str(&self.render_steps(else_block, depth + 1));
+        }
+    }
+
+    fn render_for_header(&self, kind: &ForKind) -> String {
+        match kind {
+            ForKind::ForEach { var, iter } => match self.lang {
+                NaturalLang::Zh => format!("对 {} 中的每个 {}，重复以下步骤：", expr_to_text(iter), var),
+                NaturalLang::En => format!("For each {} in {}, repeat:", var, expr_to_text(iter)),
+            },
+            ForKind::Range {
+                var,
+                start,
+                end,
+                step,
+            } => {
+                let step_text = step
+                    .as_ref()
+                    .map(|s| format!(", step {}", expr_to_text(s)))
+                    .unwrap_or_default();
+                match self.lang {
+                    NaturalLang::Zh => format!(
+                        "令 {} 从 {} 到 {}{}，重复以下步骤：",
+                        var,
+                        expr_to_text(start),
+                        expr_to_text(end),
+                        step_text
+                    ),
+                    NaturalLang::En => format!(
+                        "For {} from {} to {}{}, repeat:",
+                        var,
+                        expr_to_text(start),
+                        expr_to_text(end),
+                        step_text
+                    ),
+                }
+            }
+            ForKind::CStyle { cond, step, .. } => match self.lang {
+                NaturalLang::Zh => format!(
+                    "按条件 {} 和步进 {} 循环执行：",
+                    expr_to_text(cond),
+                    expr_to_text(step)
+                ),
+                NaturalLang::En => format!(
+                    "Loop with condition {} and step {}, repeat:",
+                    expr_to_text(cond),
+                    expr_to_text(step)
+                ),
+            },
         }
     }
 
@@ -449,6 +564,54 @@ def binary_search(nums, target):
         } else {
             panic!("Expected function");
         }
+    }
+
+    #[test]
+    fn renders_while_and_if_steps_zh() {
+        let source = r#"
+def foo(x):
+    while x > 0:
+        if x == 1:
+            return x
+        x = x - 1
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
+        assert!(out.contains("当 x > 0 时重复以下步骤"));
+        assert!(out.contains("如果 x = 1，则"));
+        assert!(out.contains("返回 x"));
+    }
+
+    #[test]
+    fn renders_for_each_header_en() {
+        let stmt = Stmt::For {
+            kind: ForKind::ForEach {
+                var: "x".into(),
+                iter: Expr::Ident("nums".into()),
+            },
+            body: Block(vec![Stmt::Break]),
+        };
+        let mut out = String::new();
+        ExplainRenderer::new(NaturalLang::En).render_stmt(&stmt, 0, &mut out);
+        assert!(out.contains("For each x in nums, repeat:"));
+        assert!(out.contains("Break out of loop"));
+    }
+
+    #[test]
+    fn renders_else_if_zh() {
+        let source = r#"
+def foo(x):
+    if x == 1:
+        return 1
+    elif x == 2:
+        return 2
+    else:
+        return 3
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
+        assert!(out.contains("否则如果 x = 2，则"));
+        assert!(out.contains("否则："));
     }
 
     #[test]
