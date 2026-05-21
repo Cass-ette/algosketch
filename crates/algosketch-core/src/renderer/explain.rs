@@ -8,6 +8,7 @@ pub struct ExplainRenderer {
     pub lang: NaturalLang,
 }
 
+#[allow(dead_code)]
 impl ExplainRenderer {
     pub fn new(lang: NaturalLang) -> Self {
         Self { lang }
@@ -17,14 +18,57 @@ impl ExplainRenderer {
         String::new()
     }
 
-    // Temporarily unused until the next task wires pattern helpers into detect_purpose.
-    #[allow(dead_code)]
+    fn detect_purpose(&self, f: &Function) -> String {
+        let name_lower = f.name.to_lowercase();
+        let has_loop = self.has_loop(&f.body);
+        let has_recursion = self.has_recursion(f);
+
+        let action = if name_lower.contains("search") || name_lower.contains("find") {
+            match self.lang {
+                NaturalLang::Zh => "查找",
+                NaturalLang::En => "search for",
+            }
+        } else if name_lower.contains("sort") {
+            match self.lang {
+                NaturalLang::Zh => "排序",
+                NaturalLang::En => "sort",
+            }
+        } else if name_lower.contains("reverse") {
+            match self.lang {
+                NaturalLang::Zh => "反转",
+                NaturalLang::En => "reverse",
+            }
+        } else {
+            match self.lang {
+                NaturalLang::Zh => "处理",
+                NaturalLang::En => "process",
+            }
+        };
+
+        let method = if has_recursion {
+            match self.lang {
+                NaturalLang::Zh => "（递归）",
+                NaturalLang::En => " (recursively)",
+            }
+        } else if has_loop {
+            match self.lang {
+                NaturalLang::Zh => "（迭代）",
+                NaturalLang::En => " (iteratively)",
+            }
+        } else {
+            ""
+        };
+
+        match self.lang {
+            NaturalLang::Zh => format!("{}输入数据{}", action, method),
+            NaturalLang::En => format!("{} the input{}", action, method),
+        }
+    }
+
     fn has_loop(&self, block: &Block) -> bool {
         block.0.iter().any(|stmt| self.stmt_has_loop(stmt))
     }
 
-    // Temporarily unused until the next task wires pattern helpers into detect_purpose.
-    #[allow(dead_code)]
     fn stmt_has_loop(&self, stmt: &Stmt) -> bool {
         match stmt {
             Stmt::If {
@@ -37,14 +81,10 @@ impl ExplainRenderer {
         }
     }
 
-    // Temporarily unused until the next task wires pattern helpers into detect_purpose.
-    #[allow(dead_code)]
     fn has_recursion(&self, f: &Function) -> bool {
         self.block_calls_function(&f.body, &f.name)
     }
 
-    // Temporarily unused until the next task wires pattern helpers into detect_purpose.
-    #[allow(dead_code)]
     fn block_calls_function(&self, block: &Block, fname: &str) -> bool {
         block
             .0
@@ -52,8 +92,6 @@ impl ExplainRenderer {
             .any(|stmt| self.stmt_calls_function(stmt, fname))
     }
 
-    // Temporarily unused until the next task wires pattern helpers into detect_purpose.
-    #[allow(dead_code)]
     fn stmt_calls_function(&self, stmt: &Stmt, fname: &str) -> bool {
         match stmt {
             Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => self.expr_calls_function(e, fname),
@@ -79,8 +117,6 @@ impl ExplainRenderer {
         }
     }
 
-    // Temporarily unused until the next task wires pattern helpers into detect_purpose.
-    #[allow(dead_code)]
     fn expr_calls_function(&self, expr: &Expr, fname: &str) -> bool {
         match expr {
             Expr::Call { callee, args } => {
@@ -218,6 +254,42 @@ def factorial(n):
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(renderer.has_recursion(f));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn detects_search_purpose_zh() {
+        let source = r#"
+def binary_search(nums, target):
+    while True:
+        pass
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let renderer = ExplainRenderer::new(NaturalLang::Zh);
+        if let Some(Item::Function(f)) = module.items.first() {
+            let purpose = renderer.detect_purpose(f);
+            assert!(purpose.contains("查找"));
+            assert!(purpose.contains("迭代"));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn detects_search_purpose_en() {
+        let source = r#"
+def binary_search(nums, target):
+    while True:
+        pass
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        if let Some(Item::Function(f)) = module.items.first() {
+            let purpose = renderer.detect_purpose(f);
+            assert!(purpose.contains("search"));
+            assert!(purpose.contains("iteratively"));
         } else {
             panic!("Expected function");
         }
