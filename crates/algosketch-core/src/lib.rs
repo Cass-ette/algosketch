@@ -37,3 +37,22 @@ impl SourceLang {
         }
     }
 }
+
+/// Natural language for explanation output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NaturalLang {
+    Zh,
+    En,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn natural_lang_enum_exists() {
+        let zh = NaturalLang::Zh;
+        let en = NaturalLang::En;
+        assert_ne!(zh, en);
+    }
+}
