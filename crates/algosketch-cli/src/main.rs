@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use algosketch_core::parser::{LanguageParser, PythonParser};
 use algosketch_core::renderer::PseudoRenderer;
-use algosketch_core::{PseudoError, SourceLang};
+use algosketch_core::{NaturalLang, PseudoError, SourceLang};
 use clap::{Parser, ValueEnum};
 
 #[derive(Debug, Parser)]
@@ -57,6 +57,46 @@ impl From<CliLang> for SourceLang {
 enum OutFormat {
     Md,
     Text,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum NaturalLangArg {
+    Zh,
+    En,
+    Auto,
+}
+
+// Wired by the CLI flag in Task 11.
+#[allow(dead_code)]
+fn resolve_natural_lang(arg: NaturalLangArg) -> NaturalLang {
+    match arg {
+        NaturalLangArg::Zh => NaturalLang::Zh,
+        NaturalLangArg::En => NaturalLang::En,
+        NaturalLangArg::Auto => detect_locale(),
+    }
+}
+
+// Wired by the CLI flag in Task 11.
+#[allow(dead_code)]
+fn detect_locale() -> NaturalLang {
+    if let Ok(val) = std::env::var("PSEUDOCODE_LANG") {
+        if val.starts_with("zh") {
+            return NaturalLang::Zh;
+        }
+        if val.starts_with("en") {
+            return NaturalLang::En;
+        }
+    }
+
+    for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(val) = std::env::var(var) {
+            if val.starts_with("zh") || val.starts_with("zh_") {
+                return NaturalLang::Zh;
+            }
+        }
+    }
+
+    NaturalLang::En
 }
 
 fn main() -> ExitCode {
@@ -146,5 +186,16 @@ fn exit_code_for(e: &PseudoError) -> u8 {
         PseudoError::Io(_) => 1,
         PseudoError::Parse { .. } => 2,
         PseudoError::Internal(_) => 3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_explicit_natural_lang() {
+        assert_eq!(resolve_natural_lang(NaturalLangArg::Zh), NaturalLang::Zh);
+        assert_eq!(resolve_natural_lang(NaturalLangArg::En), NaturalLang::En);
     }
 }
