@@ -137,6 +137,97 @@ impl ExplainRenderer {
     }
 }
 
+#[allow(dead_code)]
+fn expr_to_text(expr: &Expr) -> String {
+    match expr {
+        Expr::Literal(lit) => render_literal(lit),
+        Expr::Ident(name) => name.clone(),
+        Expr::Binary { op, lhs, rhs } => {
+            format!(
+                "{} {} {}",
+                render_binary_operand(lhs),
+                render_binop(*op),
+                render_binary_operand(rhs)
+            )
+        }
+        Expr::Unary { op, expr } => format!("{}{}", render_unop(*op), expr_to_text(expr)),
+        Expr::Call { callee, args } => render_call(callee, args),
+        Expr::Index { obj, index } => format!("{}[{}]", expr_to_text(obj), expr_to_text(index)),
+        Expr::Field { obj, name } => format!("{}.{}", expr_to_text(obj), name),
+        Expr::Tuple(items) => items.iter().map(expr_to_text).collect::<Vec<_>>().join(", "),
+        Expr::Raw(text) => text.clone(),
+    }
+}
+
+#[allow(dead_code)]
+fn render_binary_operand(expr: &Expr) -> String {
+    match expr {
+        Expr::Binary { .. } => format!("({})", expr_to_text(expr)),
+        _ => expr_to_text(expr),
+    }
+}
+
+#[allow(dead_code)]
+fn render_call(callee: &Expr, args: &[Expr]) -> String {
+    if let Expr::Ident(name) = callee {
+        if name == "len" && args.len() == 1 {
+            return format!("LENGTH({})", expr_to_text(&args[0]));
+        }
+    }
+    if let Expr::Field { obj, name } = callee {
+        if (name == "size" || name == "length") && args.is_empty() {
+            return format!("LENGTH({})", expr_to_text(obj));
+        }
+    }
+    let args_str = args.iter().map(expr_to_text).collect::<Vec<_>>().join(", ");
+    format!("{}({})", expr_to_text(callee), args_str)
+}
+
+#[allow(dead_code)]
+fn render_literal(lit: &Literal) -> String {
+    match lit {
+        Literal::Int(n) => n.to_string(),
+        Literal::Float(s) => s.clone(),
+        Literal::Str(s) => format!("\"{s}\""),
+        Literal::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+        Literal::None => "NIL".to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn render_binop(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::IntDiv => "DIV",
+        BinOp::Mod => "MOD",
+        BinOp::Eq => "=",
+        BinOp::Ne => "\u{2260}",
+        BinOp::Lt => "<",
+        BinOp::Le => "\u{2264}",
+        BinOp::Gt => ">",
+        BinOp::Ge => "\u{2265}",
+        BinOp::And => "AND",
+        BinOp::Or => "OR",
+        BinOp::BitAnd => "&",
+        BinOp::BitOr => "|",
+        BinOp::BitXor => "^",
+        BinOp::Shl => "<<",
+        BinOp::Shr => ">>",
+    }
+}
+
+#[allow(dead_code)]
+fn render_unop(op: UnOp) -> &'static str {
+    match op {
+        UnOp::Neg => "-",
+        UnOp::Not => "NOT ",
+        UnOp::BitNot => "~",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,6 +381,55 @@ def binary_search(nums, target):
             let purpose = renderer.detect_purpose(f);
             assert!(purpose.contains("search"));
             assert!(purpose.contains("iteratively"));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn expr_to_text_uses_pseudocode_operators() {
+        let source = r#"
+def foo(nums):
+    mid = (left + right) // 2
+    size = len(nums) - 1
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        if let Some(Item::Function(f)) = module.items.first() {
+            // First assignment: mid = (left + right) // 2
+            let first_assign = f.body.0.first().unwrap();
+            if let Stmt::Assign { value, .. } = first_assign {
+                assert_eq!(expr_to_text(value), "(left + right) DIV 2");
+            } else {
+                panic!("Expected Assign");
+            }
+
+            // Second assignment: size = len(nums) - 1
+            let second_assign = f.body.0.get(1).unwrap();
+            if let Stmt::Assign { value, .. } = second_assign {
+                assert_eq!(expr_to_text(value), "LENGTH(nums) - 1");
+            } else {
+                panic!("Expected Assign");
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn expr_to_text_renders_comparisons() {
+        let source = r#"
+def foo(nums, target):
+    if nums[mid] == target:
+        return mid
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        if let Some(Item::Function(f)) = module.items.first() {
+            let if_stmt = f.body.0.first().unwrap();
+            if let Stmt::If { cond, .. } = if_stmt {
+                assert_eq!(expr_to_text(cond), "nums[mid] = target");
+            } else {
+                panic!("Expected If");
+            }
         } else {
             panic!("Expected function");
         }
