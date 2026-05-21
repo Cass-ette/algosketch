@@ -17,6 +17,74 @@ impl ExplainRenderer {
         String::new()
     }
 
+    // Used by render_function in later tasks; kept private until then.
+    #[allow(dead_code)]
+    fn render_stmt(&self, stmt: &Stmt, _depth: usize, out: &mut String) {
+        match stmt {
+            Stmt::Assign { target, value } => {
+                let line = match self.lang {
+                    NaturalLang::Zh => {
+                        format!("将 {} 赋值为 {}", expr_to_text(target), expr_to_text(value))
+                    }
+                    NaturalLang::En => {
+                        format!("Assign {} to {}", expr_to_text(target), expr_to_text(value))
+                    }
+                };
+                out.push_str(&format!("{}\n", line));
+            }
+            Stmt::Return(expr) => {
+                let val = expr.as_ref().map(expr_to_text).unwrap_or_default();
+                let line = match self.lang {
+                    NaturalLang::Zh => format!("返回 {}", val),
+                    NaturalLang::En => format!("Return {}", val),
+                };
+                out.push_str(&format!("{}\n", line));
+            }
+            Stmt::Break => {
+                let line = match self.lang {
+                    NaturalLang::Zh => "跳出循环",
+                    NaturalLang::En => "Break out of loop",
+                };
+                out.push_str(&format!("{}\n", line));
+            }
+            Stmt::Continue => {
+                let line = match self.lang {
+                    NaturalLang::Zh => "继续下一次迭代",
+                    NaturalLang::En => "Continue to next iteration",
+                };
+                out.push_str(&format!("{}\n", line));
+            }
+            Stmt::ExprStmt(e) => {
+                out.push_str(&format!("{}\n", expr_to_text(e)));
+            }
+            Stmt::Raw(_) => {
+                let line = match self.lang {
+                    NaturalLang::Zh => "> 此处源代码未能结构化解析，已原样保留。",
+                    NaturalLang::En => "> Unparsed source preserved as-is.",
+                };
+                out.push_str(&format!("{}\n", line));
+            }
+            Stmt::VarDecl(var) => {
+                let line = match &var.init {
+                    Some(init) => match self.lang {
+                        NaturalLang::Zh => {
+                            format!("声明 {} 并赋值为 {}", var.name, expr_to_text(init))
+                        }
+                        NaturalLang::En => {
+                            format!("Declare {} and set it to {}", var.name, expr_to_text(init))
+                        }
+                    },
+                    None => match self.lang {
+                        NaturalLang::Zh => format!("声明 {}", var.name),
+                        NaturalLang::En => format!("Declare {}", var.name),
+                    },
+                };
+                out.push_str(&format!("{}\n", line));
+            }
+            _ => {}
+        }
+    }
+
     // Used by render_function in Task 7; kept private until then.
     #[allow(dead_code)]
     fn detect_purpose(&self, f: &Function) -> String {
@@ -138,8 +206,6 @@ impl ExplainRenderer {
     }
 }
 
-// Used by statement templates in Task 7; kept private until then.
-#[allow(dead_code)]
 fn expr_to_text(expr: &Expr) -> String {
     match expr {
         Expr::Literal(lit) => render_literal(lit),
@@ -161,8 +227,6 @@ fn expr_to_text(expr: &Expr) -> String {
     }
 }
 
-// Used by statement templates in Task 7; kept private until then.
-#[allow(dead_code)]
 fn render_binary_operand(expr: &Expr) -> String {
     match expr {
         Expr::Binary { .. } => format!("({})", expr_to_text(expr)),
@@ -170,8 +234,6 @@ fn render_binary_operand(expr: &Expr) -> String {
     }
 }
 
-// Used by statement templates in Task 7; kept private until then.
-#[allow(dead_code)]
 fn render_call(callee: &Expr, args: &[Expr]) -> String {
     if let Expr::Ident(name) = callee {
         if name == "len" && args.len() == 1 {
@@ -187,8 +249,6 @@ fn render_call(callee: &Expr, args: &[Expr]) -> String {
     format!("{}({})", expr_to_text(callee), args_str)
 }
 
-// Used by statement templates in Task 7; kept private until then.
-#[allow(dead_code)]
 fn render_literal(lit: &Literal) -> String {
     match lit {
         Literal::Int(n) => n.to_string(),
@@ -199,8 +259,6 @@ fn render_literal(lit: &Literal) -> String {
     }
 }
 
-// Used by statement templates in Task 7; kept private until then.
-#[allow(dead_code)]
 fn render_binop(op: BinOp) -> &'static str {
     match op {
         BinOp::Add => "+",
@@ -225,8 +283,6 @@ fn render_binop(op: BinOp) -> &'static str {
     }
 }
 
-// Used by statement templates in Task 7; kept private until then.
-#[allow(dead_code)]
 fn render_unop(op: UnOp) -> &'static str {
     match op {
         UnOp::Neg => "-",
@@ -391,6 +447,61 @@ def binary_search(nums, target):
         } else {
             panic!("Expected function");
         }
+    }
+
+    #[test]
+    fn renders_assign_stmt_zh() {
+        let source = r#"
+def foo():
+    x = 5
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let renderer = ExplainRenderer::new(NaturalLang::Zh);
+        if let Some(Item::Function(f)) = module.items.first() {
+            let mut out = String::new();
+            renderer.render_stmt(&f.body.0[0], 0, &mut out);
+            assert!(out.contains("将 x 赋值为 5"));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn renders_return_stmt_en() {
+        let source = r#"
+def foo():
+    return 42
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        if let Some(Item::Function(f)) = module.items.first() {
+            let mut out = String::new();
+            renderer.render_stmt(&f.body.0[0], 0, &mut out);
+            assert!(out.contains("Return 42"));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn renders_raw_stmt_zh() {
+        let renderer = ExplainRenderer::new(NaturalLang::Zh);
+        let mut out = String::new();
+        renderer.render_stmt(&Stmt::Raw("...".to_string()), 0, &mut out);
+        assert!(out.contains("此处源代码未能结构化解析"));
+    }
+
+    #[test]
+    fn renders_vardecl_with_init_en() {
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        let mut out = String::new();
+        let stmt = Stmt::VarDecl(VarDecl {
+            name: "x".to_string(),
+            type_hint: None,
+            init: Some(Expr::Literal(Literal::Int(1))),
+        });
+        renderer.render_stmt(&stmt, 0, &mut out);
+        assert!(out.contains("Declare x and set it to 1"));
     }
 
     #[test]
