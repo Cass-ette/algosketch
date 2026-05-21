@@ -1,4 +1,4 @@
-//! Pseudocode renderer.
+//! Pseudocode renderer (CLRS-style).
 //!
 //! Walks an algosketch IR and emits CLRS-style pseudocode:
 //! uppercase keywords, `←` for assignment, `≤ ≥ ≠`, `DIV`, `MOD`,
