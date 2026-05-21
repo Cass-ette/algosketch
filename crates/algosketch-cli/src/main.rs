@@ -34,6 +34,18 @@ struct Cli {
     /// Indent width.
     #[arg(long = "indent", default_value_t = 2)]
     indent: usize,
+
+    /// Disable pseudocode output.
+    #[arg(long = "no-pseudo")]
+    no_pseudo: bool,
+
+    /// Disable explanation output.
+    #[arg(long = "no-explain")]
+    no_explain: bool,
+
+    /// Natural language for explanations: zh | en | auto.
+    #[arg(long = "lang", value_enum, default_value_t = NaturalLangArg::Auto)]
+    lang: NaturalLangArg,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

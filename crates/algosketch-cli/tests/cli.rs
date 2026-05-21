@@ -30,3 +30,14 @@ fn invalid_python_returns_parse_error() {
         .code(2)
         .stderr(contains("parse error"));
 }
+
+#[test]
+fn help_shows_explanation_flags() {
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg("--help");
+    cmd.assert()
+        .success()
+        .stdout(contains("--lang"))
+        .stdout(contains("--no-pseudo"))
+        .stdout(contains("--no-explain"));
+}
