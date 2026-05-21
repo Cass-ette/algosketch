@@ -1,7 +1,7 @@
 //! Natural-language explanation renderer.
 
-use crate::ir::*;
 use crate::NaturalLang;
+use crate::ir::*;
 
 #[derive(Debug)]
 pub struct ExplainRenderer {
