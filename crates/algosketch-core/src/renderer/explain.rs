@@ -33,10 +33,11 @@ impl ExplainRenderer {
                 out.push_str(&format!("{}\n", line));
             }
             Stmt::Return(expr) => {
-                let val = expr.as_ref().map(expr_to_text).unwrap_or_default();
-                let line = match self.lang {
-                    NaturalLang::Zh => format!("返回 {}", val),
-                    NaturalLang::En => format!("Return {}", val),
+                let line = match (self.lang, expr) {
+                    (NaturalLang::Zh, Some(e)) => format!("返回 {}", expr_to_text(e)),
+                    (NaturalLang::En, Some(e)) => format!("Return {}", expr_to_text(e)),
+                    (NaturalLang::Zh, None) => "返回".to_string(),
+                    (NaturalLang::En, None) => "Return".to_string(),
                 };
                 out.push_str(&format!("{}\n", line));
             }
@@ -81,11 +82,12 @@ impl ExplainRenderer {
                 };
                 out.push_str(&format!("{}\n", line));
             }
+            // Control flow statement rendering is deferred to the next task.
             _ => {}
         }
     }
 
-    // Used by render_function in Task 7; kept private until then.
+    // Used by render_function in later tasks; kept private until then.
     #[allow(dead_code)]
     fn detect_purpose(&self, f: &Function) -> String {
         let name_lower = f.name.to_lowercase();
@@ -481,6 +483,59 @@ def foo():
         } else {
             panic!("Expected function");
         }
+    }
+
+    #[test]
+    fn renders_return_none_stmt_en_without_trailing_space() {
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        let mut out = String::new();
+        renderer.render_stmt(&Stmt::Return(None), 0, &mut out);
+        assert_eq!(out, "Return\n");
+    }
+
+    #[test]
+    fn renders_return_none_stmt_zh_without_trailing_space() {
+        let renderer = ExplainRenderer::new(NaturalLang::Zh);
+        let mut out = String::new();
+        renderer.render_stmt(&Stmt::Return(None), 0, &mut out);
+        assert_eq!(out, "返回\n");
+    }
+
+    #[test]
+    fn renders_break_stmt_en() {
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        let mut out = String::new();
+        renderer.render_stmt(&Stmt::Break, 0, &mut out);
+        assert_eq!(out, "Break out of loop\n");
+    }
+
+    #[test]
+    fn renders_continue_stmt_en() {
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        let mut out = String::new();
+        renderer.render_stmt(&Stmt::Continue, 0, &mut out);
+        assert_eq!(out, "Continue to next iteration\n");
+    }
+
+    #[test]
+    fn renders_expr_stmt() {
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        let mut out = String::new();
+        renderer.render_stmt(&Stmt::ExprStmt(Expr::Ident("tick".to_string())), 0, &mut out);
+        assert_eq!(out, "tick\n");
+    }
+
+    #[test]
+    fn renders_vardecl_without_init_en() {
+        let renderer = ExplainRenderer::new(NaturalLang::En);
+        let mut out = String::new();
+        let stmt = Stmt::VarDecl(VarDecl {
+            name: "x".to_string(),
+            type_hint: None,
+            init: None,
+        });
+        renderer.render_stmt(&stmt, 0, &mut out);
+        assert_eq!(out, "Declare x\n");
     }
 
     #[test]
