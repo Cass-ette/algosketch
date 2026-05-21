@@ -83,8 +83,9 @@ impl ExplainRenderer {
     #[allow(dead_code)]
     fn expr_calls_function(&self, expr: &Expr, fname: &str) -> bool {
         match expr {
-            Expr::Call { callee, .. } => {
+            Expr::Call { callee, args } => {
                 matches!(callee.as_ref(), Expr::Ident(name) if name == fname)
+                    || args.iter().any(|arg| self.expr_calls_function(arg, fname))
             }
             Expr::Binary { lhs, rhs, .. } => {
                 self.expr_calls_function(lhs, fname) || self.expr_calls_function(rhs, fname)
@@ -197,6 +198,21 @@ def factorial(n):
         let source = r#"
 def factorial(n):
     return -factorial(n - 1)
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let renderer = ExplainRenderer::new(NaturalLang::Zh);
+        if let Some(Item::Function(f)) = module.items.first() {
+            assert!(renderer.has_recursion(f));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn detects_recursion_in_call_argument() {
+        let source = r#"
+def factorial(n):
+    return helper(factorial(n - 1))
 "#;
         let module = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
