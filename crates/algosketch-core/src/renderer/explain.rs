@@ -17,10 +17,32 @@ impl ExplainRenderer {
         let mut out = String::new();
         for item in &module.items {
             if let Item::Function(f) = item {
-                out.push_str(&self.render_steps(&f.body, 1));
+                out.push_str(&self.render_function(f));
+                out.push('\n');
             }
         }
         out
+    }
+
+    pub fn render_function(&self, f: &Function) -> String {
+        let params = f
+            .params
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let purpose = self.detect_purpose(f);
+        let steps = self.render_steps(&f.body, 1);
+        match self.lang {
+            NaturalLang::Zh => format!(
+                "函数 {}({})\n\n目的：{}\n\n步骤：\n{}",
+                f.name, params, purpose, steps
+            ),
+            NaturalLang::En => format!(
+                "Function {}({})\n\nPurpose: {}\n\nSteps:\n{}",
+                f.name, params, purpose, steps
+            ),
+        }
     }
 
     fn render_steps(&self, block: &Block, depth: usize) -> String {
@@ -244,8 +266,6 @@ impl ExplainRenderer {
         }
     }
 
-    // Used by render_function in later tasks; kept private until then.
-    #[allow(dead_code)]
     fn detect_purpose(&self, f: &Function) -> String {
         let name_lower = f.name.to_lowercase();
         let has_loop = self.has_loop(&f.body);
@@ -613,6 +633,54 @@ def binary_search(nums, target):
     }
 
     #[test]
+    fn renders_binary_search_explanation_zh() {
+        let source = r#"
+def binary_search(nums, target):
+    left, right = 0, len(nums) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if nums[mid] == target:
+            return mid
+        elif nums[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return -1
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
+        assert!(out.contains("函数 binary_search(nums, target)"));
+        assert!(out.contains("目的：查找输入数据（迭代）"));
+        assert!(out.contains("步骤："));
+        assert!(out.contains("当 left ≤ right 时重复以下步骤"));
+        assert!(out.contains("否则如果 nums[mid] < target，则"));
+    }
+
+    #[test]
+    fn renders_binary_search_explanation_en() {
+        let source = r#"
+def binary_search(nums, target):
+    left, right = 0, len(nums) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if nums[mid] == target:
+            return mid
+        elif nums[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return -1
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let out = ExplainRenderer::new(NaturalLang::En).render_module(&module);
+        assert!(out.contains("Function binary_search(nums, target)"));
+        assert!(out.contains("Purpose: search for the input (iteratively)"));
+        assert!(out.contains("Steps:"));
+        assert!(out.contains("While left ≤ right, repeat"));
+        assert!(out.contains("Otherwise if nums[mid] < target, then"));
+    }
+
+    #[test]
     fn renders_while_and_if_steps_zh() {
         let source = r#"
 def foo(x):
@@ -641,19 +709,20 @@ def foo(x):
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
         assert_eq!(
             out,
-            "  1. 当 x > 0 时重复以下步骤：\n    1. 如果 x = 1，则：\n      1. 返回 x\n    2. 将 x 赋值为 x - 1\n"
+            "函数 foo(x)\n\n目的：处理输入数据（迭代）\n\n步骤：\n  1. 当 x > 0 时重复以下步骤：\n    1. 如果 x = 1，则：\n      1. 返回 x\n    2. 将 x 赋值为 x - 1\n\n"
         );
     }
 
     #[test]
-    fn render_module_starts_function_steps_at_depth_one() {
+    fn render_module_includes_function_header_and_steps_at_depth_one() {
         let source = r#"
 def foo():
     return 1
 "#;
         let module = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
-        assert_eq!(out, "  1. 返回 1\n");
+        assert!(out.contains("函数 foo()"));
+        assert!(out.contains("步骤：\n  1. 返回 1\n"));
     }
 
     #[test]
