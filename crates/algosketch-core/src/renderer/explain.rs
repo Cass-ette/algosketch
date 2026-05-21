@@ -157,7 +157,9 @@ impl ExplainRenderer {
     fn render_for_header(&self, kind: &ForKind) -> String {
         match kind {
             ForKind::ForEach { var, iter } => match self.lang {
-                NaturalLang::Zh => format!("对 {} 中的每个 {}，重复以下步骤：", expr_to_text(iter), var),
+                NaturalLang::Zh => {
+                    format!("对 {} 中的每个 {}，重复以下步骤：", expr_to_text(iter), var)
+                }
                 NaturalLang::En => format!("For each {} in {}, repeat:", var, expr_to_text(iter)),
             },
             ForKind::Range {
@@ -165,40 +167,80 @@ impl ExplainRenderer {
                 start,
                 end,
                 step,
-            } => {
-                let step_text = step
-                    .as_ref()
-                    .map(|s| format!(", step {}", expr_to_text(s)))
-                    .unwrap_or_default();
-                match self.lang {
-                    NaturalLang::Zh => format!(
+            } => match self.lang {
+                NaturalLang::Zh => {
+                    let step_text = step
+                        .as_ref()
+                        .map(|s| format!("，步长为 {}", expr_to_text(s)))
+                        .unwrap_or_default();
+                    format!(
                         "令 {} 从 {} 到 {}{}，重复以下步骤：",
                         var,
                         expr_to_text(start),
                         expr_to_text(end),
                         step_text
-                    ),
-                    NaturalLang::En => format!(
+                    )
+                }
+                NaturalLang::En => {
+                    let step_text = step
+                        .as_ref()
+                        .map(|s| format!(", step {}", expr_to_text(s)))
+                        .unwrap_or_default();
+                    format!(
                         "For {} from {} to {}{}, repeat:",
                         var,
                         expr_to_text(start),
                         expr_to_text(end),
                         step_text
-                    ),
+                    )
                 }
-            }
-            ForKind::CStyle { cond, step, .. } => match self.lang {
+            },
+            ForKind::CStyle { init, cond, step } => match self.lang {
                 NaturalLang::Zh => format!(
-                    "按条件 {} 和步进 {} 循环执行：",
+                    "按初始化 {}、条件 {} 和步进 {} 循环执行：",
+                    self.render_stmt_inline(init),
                     expr_to_text(cond),
                     expr_to_text(step)
                 ),
                 NaturalLang::En => format!(
-                    "Loop with condition {} and step {}, repeat:",
+                    "Loop with init {}, condition {}, and step {}, repeat:",
+                    self.render_stmt_inline(init),
                     expr_to_text(cond),
                     expr_to_text(step)
                 ),
             },
+        }
+    }
+
+    fn render_stmt_inline(&self, stmt: &Stmt) -> String {
+        match stmt {
+            Stmt::Assign { target, value } => match self.lang {
+                NaturalLang::Zh => {
+                    format!("将 {} 赋值为 {}", expr_to_text(target), expr_to_text(value))
+                }
+                NaturalLang::En => {
+                    format!("Assign {} to {}", expr_to_text(target), expr_to_text(value))
+                }
+            },
+            Stmt::VarDecl(var) => match &var.init {
+                Some(init) => match self.lang {
+                    NaturalLang::Zh => format!("声明 {} 并赋值为 {}", var.name, expr_to_text(init)),
+                    NaturalLang::En => {
+                        format!("Declare {} and set it to {}", var.name, expr_to_text(init))
+                    }
+                },
+                None => match self.lang {
+                    NaturalLang::Zh => format!("声明 {}", var.name),
+                    NaturalLang::En => format!("Declare {}", var.name),
+                },
+            },
+            Stmt::ExprStmt(e) => expr_to_text(e),
+            Stmt::Raw(text) => text.clone(),
+            _ => {
+                let mut out = String::new();
+                self.render_stmt(stmt, 0, &mut out);
+                out.trim().replace('\n', " ")
+            }
         }
     }
 
@@ -339,7 +381,11 @@ fn expr_to_text(expr: &Expr) -> String {
         Expr::Call { callee, args } => render_call(callee, args),
         Expr::Index { obj, index } => format!("{}[{}]", expr_to_text(obj), expr_to_text(index)),
         Expr::Field { obj, name } => format!("{}.{}", expr_to_text(obj), name),
-        Expr::Tuple(items) => items.iter().map(expr_to_text).collect::<Vec<_>>().join(", "),
+        Expr::Tuple(items) => items
+            .iter()
+            .map(expr_to_text)
+            .collect::<Vec<_>>()
+            .join(", "),
         Expr::Raw(text) => text.clone(),
     }
 }
@@ -583,6 +629,34 @@ def foo(x):
     }
 
     #[test]
+    fn renders_while_and_nested_if_with_numbering_zh() {
+        let source = r#"
+def foo(x):
+    while x > 0:
+        if x == 1:
+            return x
+        x = x - 1
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
+        assert_eq!(
+            out,
+            "  1. 当 x > 0 时重复以下步骤：\n    1. 如果 x = 1，则：\n      1. 返回 x\n    2. 将 x 赋值为 x - 1\n"
+        );
+    }
+
+    #[test]
+    fn render_module_starts_function_steps_at_depth_one() {
+        let source = r#"
+def foo():
+    return 1
+"#;
+        let module = PythonParser::new().parse(source).unwrap();
+        let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
+        assert_eq!(out, "  1. 返回 1\n");
+    }
+
+    #[test]
     fn renders_for_each_header_en() {
         let stmt = Stmt::For {
             kind: ForKind::ForEach {
@@ -595,6 +669,46 @@ def foo(x):
         ExplainRenderer::new(NaturalLang::En).render_stmt(&stmt, 0, &mut out);
         assert!(out.contains("For each x in nums, repeat:"));
         assert!(out.contains("Break out of loop"));
+    }
+
+    #[test]
+    fn renders_range_step_zh() {
+        let stmt = Stmt::For {
+            kind: ForKind::Range {
+                var: "i".into(),
+                start: Expr::Literal(Literal::Int(0)),
+                end: Expr::Ident("n".into()),
+                step: Some(Expr::Literal(Literal::Int(2))),
+            },
+            body: Block(vec![Stmt::Continue]),
+        };
+        let mut out = String::new();
+        ExplainRenderer::new(NaturalLang::Zh).render_stmt(&stmt, 0, &mut out);
+        assert!(out.contains("令 i 从 0 到 n，步长为 2，重复以下步骤："));
+    }
+
+    #[test]
+    fn renders_cstyle_for_header_with_init_cond_step_en() {
+        let stmt = Stmt::For {
+            kind: ForKind::CStyle {
+                init: Box::new(Stmt::Assign {
+                    target: Expr::Ident("i".into()),
+                    value: Expr::Literal(Literal::Int(0)),
+                }),
+                cond: Expr::Binary {
+                    op: BinOp::Lt,
+                    lhs: Box::new(Expr::Ident("i".into())),
+                    rhs: Box::new(Expr::Ident("n".into())),
+                },
+                step: Expr::Raw("i = i + 1".into()),
+            },
+            body: Block(vec![Stmt::Break]),
+        };
+        let mut out = String::new();
+        ExplainRenderer::new(NaturalLang::En).render_stmt(&stmt, 0, &mut out);
+        assert!(out.contains(
+            "Loop with init Assign i to 0, condition i < n, and step i = i + 1, repeat:"
+        ));
     }
 
     #[test]
@@ -684,7 +798,11 @@ def foo():
     fn renders_expr_stmt() {
         let renderer = ExplainRenderer::new(NaturalLang::En);
         let mut out = String::new();
-        renderer.render_stmt(&Stmt::ExprStmt(Expr::Ident("tick".to_string())), 0, &mut out);
+        renderer.render_stmt(
+            &Stmt::ExprStmt(Expr::Ident("tick".to_string())),
+            0,
+            &mut out,
+        );
         assert_eq!(out, "tick\n");
     }
 
