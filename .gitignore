@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 .DS_Store
+.worktrees/
 
 # Editor / tooling local state
 .claude/
