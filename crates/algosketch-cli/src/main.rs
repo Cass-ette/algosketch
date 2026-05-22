@@ -180,7 +180,16 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
         }
     }
 
-    let output = sections.join("\n");
+    let separator = if cli.format == OutFormat::Md {
+        "\n\n"
+    } else {
+        "\n"
+    };
+    let output = sections
+        .into_iter()
+        .map(|s| s.trim_end_matches('\n').to_string())
+        .collect::<Vec<_>>()
+        .join(separator);
 
     if let Some(path) = cli.output {
         fs::write(path, output)?;

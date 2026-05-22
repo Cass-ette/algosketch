@@ -24,6 +24,7 @@ impl PseudoRenderer {
         out
     }
 
+    /// Renders a single function as pseudocode.
     pub fn render_function(&self, f: &Function) -> String {
         let mut out = String::new();
         self.render_function_into(f, &mut out);

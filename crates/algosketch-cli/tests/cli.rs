@@ -6,8 +6,39 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use predicates::str::contains;
 
-fn write_temp_python_binary_search(test_name: &str) -> PathBuf {
-    let source = r#"
+struct TempPythonFile {
+    path: PathBuf,
+}
+
+impl TempPythonFile {
+    fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl Drop for TempPythonFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn write_temp_python_file(test_name: &str, source: &str) -> TempPythonFile {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "algosketch-{test_name}-{}-{unique}.py",
+        std::process::id()
+    ));
+    fs::write(&path, source).unwrap();
+    TempPythonFile { path }
+}
+
+fn write_temp_python_binary_search(test_name: &str) -> TempPythonFile {
+    write_temp_python_file(
+        test_name,
+        r#"
 def binary_search(nums, target):
     left, right = 0, len(nums) - 1
     while left <= right:
@@ -19,17 +50,8 @@ def binary_search(nums, target):
         else:
             right = mid - 1
     return -1
-"#;
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "algosketch-{test_name}-{}-{unique}.py",
-        std::process::id()
-    ));
-    fs::write(&path, source).unwrap();
-    path
+"#,
+    )
 }
 
 #[test]
@@ -54,7 +76,7 @@ fn default_output_includes_pseudocode_and_explanation_en() {
     let fixture = write_temp_python_binary_search("default-output-en");
     let mut cmd = Command::cargo_bin("algosketch").unwrap();
 
-    cmd.arg(&fixture)
+    cmd.arg(fixture.path())
         .arg("--lang")
         .arg("en")
         .assert()
@@ -65,8 +87,6 @@ fn default_output_includes_pseudocode_and_explanation_en() {
         .stdout(contains("### Explanation"))
         .stdout(contains("Purpose:"))
         .stdout(contains("Steps:"));
-
-    fs::remove_file(fixture).unwrap();
 }
 
 #[test]
@@ -74,7 +94,7 @@ fn no_pseudo_outputs_explanation_only_zh() {
     let fixture = write_temp_python_binary_search("no-pseudo-zh");
     let mut cmd = Command::cargo_bin("algosketch").unwrap();
 
-    cmd.arg(&fixture)
+    cmd.arg(fixture.path())
         .arg("--no-pseudo")
         .arg("--lang")
         .arg("zh")
@@ -86,8 +106,6 @@ fn no_pseudo_outputs_explanation_only_zh() {
         .stdout(contains("目的："))
         .stdout(contains("步骤："))
         .stdout(contains("FUNCTION binary_search").not());
-
-    fs::remove_file(fixture).unwrap();
 }
 
 #[test]
@@ -95,7 +113,7 @@ fn no_explain_outputs_pseudocode_only() {
     let fixture = write_temp_python_binary_search("no-explain");
     let mut cmd = Command::cargo_bin("algosketch").unwrap();
 
-    cmd.arg(&fixture)
+    cmd.arg(fixture.path())
         .arg("--no-explain")
         .assert()
         .success()
@@ -105,8 +123,45 @@ fn no_explain_outputs_pseudocode_only() {
         .stdout(contains("目的：").not())
         .stdout(contains("### Explanation").not())
         .stdout(contains("### 解释").not());
+}
 
-    fs::remove_file(fixture).unwrap();
+#[test]
+fn markdown_multi_function_output_uses_single_blank_line_between_sections() {
+    let fixture = write_temp_python_file(
+        "multi-function-spacing",
+        r#"
+def first():
+    return 1
+
+def second():
+    return 2
+"#,
+    );
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+
+    let output = cmd
+        .arg(fixture.path())
+        .arg("--lang")
+        .arg("en")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).unwrap();
+
+    assert!(
+        !output.contains("\n\n\n"),
+        "output has excessive blank lines:\n{output}"
+    );
+    assert!(
+        output.contains("END FUNCTION\n```\n\n### Explanation"),
+        "pseudocode and explanation should be separated by one blank line:\n{output}"
+    );
+    assert!(
+        output.contains("Steps:\n  1. Return 1\n\n## second"),
+        "functions should be separated by one blank line:\n{output}"
+    );
 }
 
 #[test]
