@@ -307,7 +307,9 @@ fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
                 file: "input".into(),
                 message: "comparison_operator missing operator".into(),
             })?;
-            let op = parse_comparison_op(op_text)?;
+            let Ok(op) = parse_comparison_op(op_text) else {
+                return Ok(Expr::Raw(node_text(source, node).to_string()));
+            };
             Ok(Expr::Binary {
                 op,
                 lhs: Box::new(parse_expr(source, lhs)?),
@@ -427,6 +429,25 @@ def binary_search(nums, target):
             vec!["nums", "target"]
         );
         assert!(matches!(function.body.0[1], Stmt::While { .. }));
+    }
+
+    #[test]
+    fn preserves_unsupported_comparison_as_raw_expr() {
+        let source = r#"
+def rebuild_path(came_from, current):
+    while current in came_from:
+        current = came_from[current]
+    return current
+"#;
+
+        let module = PythonParser::new().parse(source).unwrap();
+        let Item::Function(function) = &module.items[0] else {
+            panic!("expected function");
+        };
+        let Stmt::While { cond, .. } = &function.body.0[0] else {
+            panic!("expected while");
+        };
+        assert_eq!(cond, &Expr::Raw("current in came_from".to_string()));
     }
 
     #[test]
