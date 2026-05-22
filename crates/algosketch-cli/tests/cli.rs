@@ -230,3 +230,33 @@ fn help_shows_explanation_flags() {
         .stdout(contains("--no-pseudo"))
         .stdout(contains("--no-explain"));
 }
+
+#[test]
+fn detects_chinese_locale_from_lang() {
+    let fixture = format!("{}/fixtures/binary_search.py", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture)
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env_remove("PSEUDOCODE_LANG")
+        .env("LANG", "zh_CN.UTF-8");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("函数 binary_search"));
+}
+
+#[test]
+fn pseudocode_lang_overrides_lang() {
+    let fixture = format!("{}/fixtures/binary_search.py", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture)
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env("LANG", "en_US.UTF-8")
+        .env("PSEUDOCODE_LANG", "zh");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("函数 binary_search"));
+}
