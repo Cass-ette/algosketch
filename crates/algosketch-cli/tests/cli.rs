@@ -55,6 +55,49 @@ def binary_search(nums, target):
 }
 
 #[test]
+fn explains_only_in_chinese() {
+    let fixture = format!("{}/fixtures/binary_search.py", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture).arg("--no-pseudo").arg("--lang").arg("zh");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("函数 binary_search"))
+        .stdout(predicate::str::contains("目的："))
+        .stdout(predicate::str::contains("步骤："))
+        .stdout(predicate::str::contains("FUNCTION binary_search").not());
+}
+
+#[test]
+fn outputs_pseudocode_and_explanation_by_default() {
+    let fixture = format!("{}/fixtures/binary_search.py", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture).arg("--lang").arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("## binary_search"))
+        .stdout(predicate::str::contains("### Pseudocode"))
+        .stdout(predicate::str::contains("FUNCTION binary_search"))
+        .stdout(predicate::str::contains("### Explanation"))
+        .stdout(predicate::str::contains("Purpose:"))
+        .stdout(predicate::str::contains("Steps:"));
+}
+
+#[test]
+fn outputs_pseudocode_only() {
+    let fixture = format!("{}/fixtures/binary_search.py", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture).arg("--no-explain");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("FUNCTION binary_search"))
+        .stdout(predicate::str::contains("Purpose:").not())
+        .stdout(predicate::str::contains("目的：").not());
+}
+
+#[test]
 fn binary_search_file_outputs_pseudocode() {
     let fixture = format!(
         "{}/tests/fixtures/binary_search.py",
