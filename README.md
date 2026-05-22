@@ -50,7 +50,7 @@ See the design spec for the full architecture, IR shape, error model, and milest
 
 Conventions:
 
-- Keywords are uppercase, such as `PROCEDURE`, `IF`, `THEN`, `ELSE`, `WHILE`, `FOR`, and `RETURN`.
+- Keywords are uppercase, such as `FUNCTION`, `IF`, `THEN`, `ELSE`, `WHILE`, `FOR`, and `RETURN`.
 - Assignment uses `←`.
 - Equality and inequality use mathematical operators such as `=`, `≠`, `≤`, `≥`, `<`, and `>`.
 - Logical operations use uppercase words such as `AND`, `OR`, and `NOT`.
@@ -58,25 +58,43 @@ Conventions:
 - Sequence length is rendered as `LENGTH(x)`.
 
 ```text
-PROCEDURE binary_search(a, target)
-    low ← 0
-    high ← LENGTH(a) - 1
-    WHILE low ≤ high DO
-        mid ← (low + high) DIV 2
-        IF a[mid] = target THEN
-            RETURN mid
-        ELSE IF a[mid] < target THEN
-            low ← mid + 1
-        ELSE
-            high ← mid - 1
-    RETURN -1
+FUNCTION binary_search(nums, target)
+  left, right ← 0, LENGTH(nums) - 1
+  WHILE left ≤ right
+    mid ← (left + right) DIV 2
+    IF nums[mid] = target THEN
+      RETURN mid
+    ELSE IF nums[mid] < target THEN
+      left ← mid + 1
+    ELSE
+      right ← mid - 1
+    END IF
+  END WHILE
+  RETURN -1
+END FUNCTION
 ```
 
 #### Explanation
 
-For `binary_search`, the English explanation describes the algorithm at a human-readable level:
+For `binary_search`, the English explanation is structured as a purpose plus numbered steps:
 
-> `binary_search` searches a sorted sequence for `target` by repeatedly checking the middle element of the current search range. If the middle element is the target, it returns that index. If the middle element is smaller than the target, it continues in the right half; otherwise, it continues in the left half. If the search range becomes empty, it returns `-1`.
+```text
+Function binary_search(nums, target)
+
+Purpose: search for the input (iteratively)
+
+Steps:
+  1. Assign left, right to 0, LENGTH(nums) - 1
+  2. While left ≤ right, repeat:
+    1. Assign mid to (left + right) DIV 2
+    2. If nums[mid] = target, then:
+      1. Return mid
+    Otherwise if nums[mid] < target, then:
+      1. Assign left to mid + 1
+    Otherwise:
+      1. Assign right to mid - 1
+  3. Return -1
+```
 
 #### References
 
@@ -139,7 +157,7 @@ cat snippet.py | algosketch - --source-lang python
 
 约定：
 
-- 关键字使用大写，例如 `PROCEDURE`、`IF`、`THEN`、`ELSE`、`WHILE`、`FOR` 和 `RETURN`。
+- 关键字使用大写，例如 `FUNCTION`、`IF`、`THEN`、`ELSE`、`WHILE`、`FOR` 和 `RETURN`。
 - 赋值使用 `←`。
 - 相等与不等关系使用数学符号，例如 `=`、`≠`、`≤`、`≥`、`<` 和 `>`。
 - 逻辑运算使用大写单词，例如 `AND`、`OR` 和 `NOT`。
@@ -150,9 +168,25 @@ cat snippet.py | algosketch - --source-lang python
 
 #### 解释（Explanation）
 
-对于 `binary_search`，中文解释会用自然语言概括算法流程：
+对于 `binary_search`，中文解释会按目的和编号步骤组织：
 
-> `binary_search` 在一个已排序序列中查找 `target`，方法是反复检查当前搜索区间的中间元素。如果中间元素就是目标值，则返回对应下标；如果中间元素小于目标值，则继续搜索右半部分；否则继续搜索左半部分。当搜索区间为空时，返回 `-1`。
+```text
+函数 binary_search(nums, target)
+
+目的：查找输入数据（迭代）
+
+步骤：
+  1. 将 left, right 赋值为 0, LENGTH(nums) - 1
+  2. 当 left ≤ right 时重复以下步骤：
+    1. 将 mid 赋值为 (left + right) DIV 2
+    2. 如果 nums[mid] = target，则：
+      1. 返回 mid
+    否则如果 nums[mid] < target，则：
+      1. 将 left 赋值为 mid + 1
+    否则：
+      1. 将 right 赋值为 mid - 1
+  3. 返回 -1
+```
 
 #### 参考文献
 
