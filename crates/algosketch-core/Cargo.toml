@@ -10,3 +10,8 @@ authors.workspace = true
 
 [dependencies]
 thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-language.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-java.workspace = true
+tree-sitter-cpp.workspace = true
