@@ -4,7 +4,7 @@
 >
 > 把真实的源代码翻译成伪代码与人类可读的解释 —— 用于学习、回顾和分享算法。
 
-**Status / 状态**: Pre-alpha — scaffolding only. See [`docs/superpowers/specs/2026-05-20-algosketch-design.md`](docs/superpowers/specs/2026-05-20-algosketch-design.md) for the full design.
+**Status / 状态**: v0.1 MVP — supports a focused subset of algorithm-style Python, Java, and C++ code. See [`docs/superpowers/specs/2026-05-20-algosketch-design.md`](docs/superpowers/specs/2026-05-20-algosketch-design.md) for the full design.
 
 ---
 
@@ -17,7 +17,9 @@
 
 Both outputs are independently toggleable. Default output format is Markdown.
 
-### Planned usage
+v0.1 is intentionally not a full Python / Java / C++ translator. It targets compact algorithm implementations with common assignments, branching, loops, calls, indexing, and returns. Unsupported fragments are preserved as Raw fallback nodes; by default the CLI warns on stderr when any fallback is present, and `--quiet` suppresses that warning.
+
+### Usage
 
 ```bash
 # Pseudocode + explanation (locale-aware)
@@ -124,7 +126,9 @@ at your option.
 
 两路输出可以独立开关。默认输出格式为 Markdown。
 
-### 计划中的用法
+v0.1 不是完整的 Python / Java / C++ 翻译器，而是面向常见算法代码子集：赋值、分支、循环、调用、下标访问与返回等。暂不支持的片段会保留为 Raw fallback；默认情况下 CLI 会在 stderr 输出警告，`--quiet` 可以关闭该警告。
+
+### 用法
 
 ```bash
 # 伪代码 + 解释（自动选择中/英文）

@@ -3,8 +3,9 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use algosketch_core::diagnostics::collect_raw_stats;
 use algosketch_core::ir::Item;
-use algosketch_core::parser::{LanguageParser, PythonParser};
+use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
 use algosketch_core::renderer::{ExplainRenderer, PseudoRenderer};
 use algosketch_core::{NaturalLang, PseudoError, SourceLang};
 use clap::{Parser, ValueEnum};
@@ -47,6 +48,10 @@ struct Cli {
     /// Natural language for explanations: zh | en | auto.
     #[arg(long = "lang", value_enum, default_value_t = NaturalLangArg::Auto)]
     lang: NaturalLangArg,
+
+    /// Suppress non-fatal diagnostics such as raw fallback warnings.
+    #[arg(short = 'q', long = "quiet")]
+    quiet: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -125,12 +130,22 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
 
     let module = match source_lang {
         SourceLang::Python => PythonParser::new().parse(&source)?,
-        SourceLang::Java | SourceLang::Cpp => {
-            return Err(PseudoError::UnsupportedLanguage(
-                source_lang.as_str().to_string(),
-            ));
-        }
+        SourceLang::Java => JavaParser::new().parse(&source)?,
+        SourceLang::Cpp => CppParser::new().parse(&source)?,
     };
+
+    if !cli.quiet {
+        let raw_stats = collect_raw_stats(&module);
+        if raw_stats.total() > 0 {
+            eprintln!(
+                "warning: {} unparsed nodes preserved as raw fallback (items: {}, statements: {}, expressions: {})",
+                raw_stats.total(),
+                raw_stats.items,
+                raw_stats.statements,
+                raw_stats.expressions
+            );
+        }
+    }
 
     let natural_lang = resolve_natural_lang(cli.lang);
     let pseudo_renderer = PseudoRenderer {

@@ -107,15 +107,18 @@ impl PseudoRenderer {
                     None => out.push_str(&format!("{pad}RETURN\n")),
                 };
             }
+            Stmt::For { kind, body } => {
+                out.push_str(&format!("{pad}{}\n", render_for_header(kind)));
+                self.render_block(body, depth + 1, out);
+                out.push_str(&format!("{pad}END FOR\n"));
+            }
             Stmt::Break => out.push_str(&format!("{pad}BREAK\n")),
             Stmt::Continue => out.push_str(&format!("{pad}CONTINUE\n")),
             Stmt::ExprStmt(e) => out.push_str(&format!("{pad}{}\n", render_expr(e))),
             Stmt::Raw(text) => {
                 out.push_str(&format!("{pad}{text} // <unparsed>\n"));
             }
-            Stmt::For { .. } | Stmt::VarDecl(_) => {
-                out.push_str(&format!("{pad}// <unsupported stmt>\n"));
-            }
+            Stmt::VarDecl(var) => out.push_str(&format!("{pad}{}\n", render_var_decl(var))),
         }
     }
 
@@ -137,6 +140,57 @@ impl PseudoRenderer {
             out.push_str(&format!("{pad}ELSE\n"));
             self.render_block(else_block, depth + 1, out);
         }
+    }
+}
+
+fn render_for_header(kind: &ForKind) -> String {
+    match kind {
+        ForKind::ForEach { var, iter } => {
+            format!("FOR EACH {var} IN {}", render_expr(iter))
+        }
+        ForKind::Range {
+            var,
+            start,
+            end,
+            step,
+        } => {
+            let mut header = format!(
+                "FOR {var} ← {} TO {} - 1",
+                render_expr(start),
+                render_expr(end)
+            );
+            if let Some(step) = step {
+                header.push_str(&format!(" STEP {}", render_expr(step)));
+            }
+            header
+        }
+        ForKind::CStyle { init, cond, step } => {
+            format!(
+                "FOR {}; {}; {}",
+                render_inline_stmt(init),
+                render_expr(cond),
+                render_expr(step)
+            )
+        }
+    }
+}
+
+fn render_inline_stmt(stmt: &Stmt) -> String {
+    match stmt {
+        Stmt::Assign { target, value } => {
+            format!("{} ← {}", render_expr(target), render_expr(value))
+        }
+        Stmt::VarDecl(var) => render_var_decl(var),
+        Stmt::ExprStmt(expr) => render_expr(expr),
+        Stmt::Raw(text) => text.clone(),
+        _ => "<unsupported stmt>".to_string(),
+    }
+}
+
+fn render_var_decl(var: &VarDecl) -> String {
+    match &var.init {
+        Some(init) => format!("{} ← {}", var.name, render_expr(init)),
+        None => format!("DECLARE {}", var.name),
     }
 }
 
@@ -231,6 +285,99 @@ fn render_unop(op: UnOp) -> &'static str {
 mod tests {
     use super::*;
     use crate::parser::{LanguageParser, PythonParser};
+
+    fn test_function(body: Vec<Stmt>) -> Function {
+        Function {
+            name: "test".to_string(),
+            params: vec![],
+            return_type: None,
+            body: Block(body),
+            span: Span::default(),
+        }
+    }
+
+    #[test]
+    fn renders_vardecl_with_initializer() {
+        let function = test_function(vec![Stmt::VarDecl(VarDecl {
+            name: "x".to_string(),
+            type_hint: None,
+            init: Some(Expr::Literal(Literal::Int(1))),
+        })]);
+
+        let out = PseudoRenderer::new().render_function(&function);
+
+        assert!(out.contains("x ← 1"), "missing VarDecl init in:\n{out}");
+        assert!(
+            !out.contains("<unsupported stmt>"),
+            "rendered unsupported marker in:\n{out}"
+        );
+    }
+
+    #[test]
+    fn renders_for_each_loop() {
+        let function = test_function(vec![Stmt::For {
+            kind: ForKind::ForEach {
+                var: "x".to_string(),
+                iter: Expr::Ident("nums".to_string()),
+            },
+            body: Block(vec![Stmt::Continue]),
+        }]);
+
+        let out = PseudoRenderer::new().render_function(&function);
+
+        assert!(
+            out.contains("FOR EACH x IN nums"),
+            "missing for-each header in:\n{out}"
+        );
+        assert!(out.contains("END FOR"), "missing END FOR in:\n{out}");
+    }
+
+    #[test]
+    fn renders_range_loop() {
+        let function = test_function(vec![Stmt::For {
+            kind: ForKind::Range {
+                var: "i".to_string(),
+                start: Expr::Literal(Literal::Int(0)),
+                end: Expr::Ident("n".to_string()),
+                step: None,
+            },
+            body: Block(vec![Stmt::Break]),
+        }]);
+
+        let out = PseudoRenderer::new().render_function(&function);
+
+        assert!(
+            out.contains("FOR i ← 0 TO n - 1"),
+            "missing range header in:\n{out}"
+        );
+    }
+
+    #[test]
+    fn renders_cstyle_for_loop() {
+        let function = test_function(vec![Stmt::For {
+            kind: ForKind::CStyle {
+                init: Box::new(Stmt::Assign {
+                    target: Expr::Ident("i".to_string()),
+                    value: Expr::Literal(Literal::Int(0)),
+                }),
+                cond: Expr::Binary {
+                    op: BinOp::Lt,
+                    lhs: Box::new(Expr::Ident("i".to_string())),
+                    rhs: Box::new(Expr::Ident("n".to_string())),
+                },
+                step: Expr::Raw("i = i + 1".to_string()),
+            },
+            body: Block(vec![Stmt::Continue]),
+        }]);
+
+        let out = PseudoRenderer::new().render_function(&function);
+
+        assert!(
+            out.contains("FOR i ← 0; i < n; i = i + 1"),
+            "missing c-style header in:\n{out}"
+        );
+        assert!(out.contains("END FOR"), "missing END FOR in:\n{out}");
+    }
 
     #[test]
     fn renders_binary_search_pseudocode() {

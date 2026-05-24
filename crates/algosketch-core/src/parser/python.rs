@@ -1,11 +1,11 @@
 use crate::error::{PseudoError, Result};
 use crate::ir::*;
+use crate::parser::common::{
+    find_anon_operator, named_child_by_kind, node_text, parse_bin_op, parse_comparison_op,
+    parse_err, parse_un_op,
+};
+use crate::parser::LanguageParser;
 use crate::SourceLang;
-
-pub trait LanguageParser {
-    fn language(&self) -> SourceLang;
-    fn parse(&self, source: &str) -> Result<Module>;
-}
 
 pub struct PythonParser;
 
@@ -58,26 +58,6 @@ impl LanguageParser for PythonParser {
             items,
         })
     }
-}
-
-fn node_text<'a>(source: &'a str, node: tree_sitter::Node<'_>) -> &'a str {
-    &source[node.start_byte()..node.end_byte()]
-}
-
-fn parse_err(msg: impl Into<String>) -> PseudoError {
-    PseudoError::Parse {
-        file: "input".into(),
-        message: msg.into(),
-    }
-}
-
-fn named_child_by_kind<'a>(
-    node: tree_sitter::Node<'a>,
-    kind: &str,
-) -> Option<tree_sitter::Node<'a>> {
-    (0..node.child_count())
-        .filter_map(|i| node.child(i))
-        .find(|c| c.is_named() && c.kind() == kind)
 }
 
 fn parse_function(source: &str, node: tree_sitter::Node) -> Result<Item> {
@@ -137,16 +117,28 @@ fn parse_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
             match inner.kind() {
                 "assignment" => {
                     let target = inner
-                        .named_child(0)
+                        .child_by_field_name("left")
+                        .or_else(|| inner.named_child(0))
                         .ok_or_else(|| parse_err("assignment missing target"))?;
                     let value = inner
-                        .named_child(1)
+                        .child_by_field_name("right")
+                        .or_else(|| inner.named_child(1))
                         .ok_or_else(|| parse_err("assignment missing value"))?;
+                    if let Some(type_node) = inner.child_by_field_name("type") {
+                        if target.kind() == "identifier" {
+                            return Ok(Stmt::VarDecl(VarDecl {
+                                name: node_text(source, target).to_string(),
+                                type_hint: Some(TypeHint(node_text(source, type_node).to_string())),
+                                init: Some(parse_expr(source, value)?),
+                            }));
+                        }
+                    }
                     Ok(Stmt::Assign {
                         target: parse_expr(source, target)?,
                         value: parse_expr(source, value)?,
                     })
                 }
+                "typed_assignment" => parse_typed_assignment(source, inner),
                 _ => Ok(Stmt::ExprStmt(parse_expr(source, inner)?)),
             }
         }
@@ -162,6 +154,7 @@ fn parse_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
                 body: parse_block(source, body)?,
             })
         }
+        "for_statement" => parse_for_stmt(source, node),
         "if_statement" => {
             let cond = node
                 .named_child(0)
@@ -189,8 +182,99 @@ fn parse_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
                 .transpose()?;
             Ok(Stmt::Return(expr))
         }
+        "break_statement" => Ok(Stmt::Break),
+        "continue_statement" => Ok(Stmt::Continue),
         _ => Ok(Stmt::Raw(node_text(source, node).to_string())),
     }
+}
+
+fn parse_typed_assignment(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
+    let target = node
+        .child_by_field_name("left")
+        .ok_or_else(|| parse_err("typed_assignment missing target"))?;
+    let type_node = node.child_by_field_name("type");
+    let value = node
+        .child_by_field_name("right")
+        .map(|value| parse_expr(source, value))
+        .transpose()?;
+
+    if target.kind() != "identifier" {
+        return Ok(Stmt::Raw(node_text(source, node).to_string()));
+    }
+
+    Ok(Stmt::VarDecl(VarDecl {
+        name: node_text(source, target).to_string(),
+        type_hint: type_node.map(|ty| TypeHint(node_text(source, ty).to_string())),
+        init: value,
+    }))
+}
+
+fn parse_for_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
+    let target = node
+        .named_child(0)
+        .ok_or_else(|| parse_err("for missing target"))?;
+    let iter = node
+        .named_child(1)
+        .ok_or_else(|| parse_err("for missing iterable"))?;
+    let body = node
+        .named_child(2)
+        .ok_or_else(|| parse_err("for missing body"))?;
+
+    let var = match target.kind() {
+        "identifier" => node_text(source, target).to_string(),
+        _ => return Ok(Stmt::Raw(node_text(source, node).to_string())),
+    };
+
+    Ok(Stmt::For {
+        kind: python_for_kind(source, var, iter)?,
+        body: parse_block(source, body)?,
+    })
+}
+
+fn python_for_kind(source: &str, var: String, iter: tree_sitter::Node) -> Result<ForKind> {
+    if iter.kind() == "call" {
+        let callee = iter
+            .named_child(0)
+            .ok_or_else(|| parse_err("call missing callee"))?;
+        if callee.kind() == "identifier" && node_text(source, callee) == "range" {
+            let args_node = iter
+                .named_child(1)
+                .ok_or_else(|| parse_err("call missing args"))?;
+            let mut args = Vec::new();
+            for i in 0..args_node.named_child_count() {
+                args.push(parse_expr(source, args_node.named_child(i).unwrap())?);
+            }
+            return match args.as_slice() {
+                [end] => Ok(ForKind::Range {
+                    var,
+                    start: Expr::Literal(Literal::Int(0)),
+                    end: end.clone(),
+                    step: None,
+                }),
+                [start, end] => Ok(ForKind::Range {
+                    var,
+                    start: start.clone(),
+                    end: end.clone(),
+                    step: None,
+                }),
+                [start, end, step] => Ok(ForKind::Range {
+                    var,
+                    start: start.clone(),
+                    end: end.clone(),
+                    step: Some(step.clone()),
+                }),
+                _ => Ok(ForKind::ForEach {
+                    var,
+                    iter: parse_expr(source, iter)?,
+                }),
+            };
+        }
+    }
+
+    Ok(ForKind::ForEach {
+        var,
+        iter: parse_expr(source, iter)?,
+    })
 }
 
 fn build_else_chain(source: &str, clauses: &[tree_sitter::Node]) -> Result<Option<Block>> {
@@ -233,6 +317,15 @@ fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
                 .map_err(|_| parse_err(format!("invalid integer literal: {text}")))?;
             Ok(Expr::Literal(Literal::Int(n)))
         }
+        "string" => {
+            let text = node_text(source, node);
+            Ok(Expr::Literal(Literal::Str(
+                text.trim_matches(['\"', '\'']).to_string(),
+            )))
+        }
+        "true" => Ok(Expr::Literal(Literal::Bool(true))),
+        "false" => Ok(Expr::Literal(Literal::Bool(false))),
+        "none" => Ok(Expr::Literal(Literal::None)),
         "call" => {
             let callee = node
                 .named_child(0)
@@ -340,63 +433,25 @@ fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
     }
 }
 
-fn find_anon_operator<'a>(source: &'a str, node: tree_sitter::Node<'_>) -> Option<&'a str> {
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            if !child.is_named() {
-                let text = node_text(source, child);
-                if !["(", ")", "[", "]", "{", "}", ",", ".", ":", ";"].contains(&text) {
-                    return Some(text);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn parse_bin_op(text: &str) -> Result<BinOp> {
-    match text {
-        "+" => Ok(BinOp::Add),
-        "-" => Ok(BinOp::Sub),
-        "*" => Ok(BinOp::Mul),
-        "/" => Ok(BinOp::Div),
-        "//" => Ok(BinOp::IntDiv),
-        "%" => Ok(BinOp::Mod),
-        "&&" | "and" => Ok(BinOp::And),
-        "||" | "or" => Ok(BinOp::Or),
-        "&" => Ok(BinOp::BitAnd),
-        "|" => Ok(BinOp::BitOr),
-        "^" => Ok(BinOp::BitXor),
-        "<<" => Ok(BinOp::Shl),
-        ">>" => Ok(BinOp::Shr),
-        _ => Err(parse_err(format!("unknown binary operator: {text}"))),
-    }
-}
-
-fn parse_comparison_op(text: &str) -> Result<BinOp> {
-    match text {
-        "==" => Ok(BinOp::Eq),
-        "!=" => Ok(BinOp::Ne),
-        "<" => Ok(BinOp::Lt),
-        "<=" => Ok(BinOp::Le),
-        ">" => Ok(BinOp::Gt),
-        ">=" => Ok(BinOp::Ge),
-        _ => Err(parse_err(format!("unknown comparison operator: {text}"))),
-    }
-}
-
-fn parse_un_op(text: &str) -> Result<UnOp> {
-    match text {
-        "-" => Ok(UnOp::Neg),
-        "not" => Ok(UnOp::Not),
-        "~" => Ok(UnOp::BitNot),
-        _ => Err(parse_err(format!("unknown unary operator: {text}"))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn java_grammar_loads() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .expect("java grammar should load");
+    }
+
+    #[test]
+    fn cpp_grammar_loads() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_cpp::LANGUAGE.into())
+            .expect("cpp grammar should load");
+    }
 
     #[test]
     fn parses_python_binary_search_function_shape() {
@@ -429,6 +484,93 @@ def binary_search(nums, target):
             vec!["nums", "target"]
         );
         assert!(matches!(function.body.0[1], Stmt::While { .. }));
+    }
+
+    #[test]
+    fn parses_python_range_for_loop() {
+        let source = r#"
+def first_even(nums):
+    for i in range(0, len(nums)):
+        if nums[i] % 2 == 0:
+            return nums[i]
+    return -1
+"#;
+
+        let module = PythonParser::new().parse(source).unwrap();
+        let Item::Function(function) = &module.items[0] else {
+            panic!("expected function");
+        };
+        let Stmt::For { kind, body } = &function.body.0[0] else {
+            panic!("expected for loop");
+        };
+        let ForKind::Range {
+            var,
+            start,
+            end,
+            step,
+        } = kind
+        else {
+            panic!("expected range for loop");
+        };
+
+        assert_eq!(var, "i");
+        assert_eq!(start, &Expr::Literal(Literal::Int(0)));
+        assert_eq!(
+            end,
+            &Expr::Call {
+                callee: Box::new(Expr::Ident("len".to_string())),
+                args: vec![Expr::Ident("nums".to_string())]
+            }
+        );
+        assert_eq!(step, &None);
+        assert!(matches!(body.0[0], Stmt::If { .. }));
+    }
+
+    #[test]
+    fn parses_python_for_each_loop() {
+        let source = r#"
+def total(nums):
+    sum = 0
+    for value in nums:
+        sum = sum + value
+    return sum
+"#;
+
+        let module = PythonParser::new().parse(source).unwrap();
+        let Item::Function(function) = &module.items[0] else {
+            panic!("expected function");
+        };
+        let Stmt::For { kind, body } = &function.body.0[1] else {
+            panic!("expected for loop");
+        };
+        assert_eq!(
+            kind,
+            &ForKind::ForEach {
+                var: "value".to_string(),
+                iter: Expr::Ident("nums".to_string())
+            }
+        );
+        assert!(matches!(body.0[0], Stmt::Assign { .. }));
+    }
+
+    #[test]
+    fn parses_python_break_and_continue() {
+        let source = r#"
+def scan(nums):
+    while True:
+        continue
+        break
+"#;
+
+        let module = PythonParser::new().parse(source).unwrap();
+        let Item::Function(function) = &module.items[0] else {
+            panic!("expected function");
+        };
+        let Stmt::While { body, .. } = &function.body.0[0] else {
+            panic!("expected while");
+        };
+        assert!(matches!(body.0[0], Stmt::Continue));
+        assert!(matches!(body.0[1], Stmt::Break));
     }
 
     #[test]

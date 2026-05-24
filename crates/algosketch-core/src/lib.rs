@@ -3,6 +3,7 @@
 //! Core library for parsing real source code into a language-neutral IR
 //! and rendering pseudocode + natural-language explanations.
 
+pub mod diagnostics;
 pub mod error;
 pub mod ir;
 pub mod parser;

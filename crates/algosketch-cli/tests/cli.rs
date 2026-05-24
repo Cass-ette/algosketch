@@ -6,23 +6,23 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use predicates::str::contains;
 
-struct TempPythonFile {
+struct TempFile {
     path: PathBuf,
 }
 
-impl TempPythonFile {
+impl TempFile {
     fn path(&self) -> &PathBuf {
         &self.path
     }
 }
 
-impl Drop for TempPythonFile {
+impl Drop for TempFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
 }
 
-fn write_temp_python_file(test_name: &str, source: &str) -> TempPythonFile {
+fn write_temp_python_file(test_name: &str, source: &str) -> TempFile {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -32,10 +32,10 @@ fn write_temp_python_file(test_name: &str, source: &str) -> TempPythonFile {
         std::process::id()
     ));
     fs::write(&path, source).unwrap();
-    TempPythonFile { path }
+    TempFile { path }
 }
 
-fn write_temp_python_binary_search(test_name: &str) -> TempPythonFile {
+fn write_temp_python_binary_search(test_name: &str) -> TempFile {
     write_temp_python_file(
         test_name,
         r#"
@@ -52,6 +52,18 @@ def binary_search(nums, target):
     return -1
 "#,
     )
+}
+
+fn temp_output_file(test_name: &str) -> TempFile {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "algosketch-{test_name}-{}-{unique}.md",
+        std::process::id()
+    ));
+    TempFile { path }
 }
 
 #[test]
@@ -169,6 +181,41 @@ fn no_explain_outputs_pseudocode_only() {
 }
 
 #[test]
+fn output_option_writes_markdown_to_file() {
+    let fixture = write_temp_python_binary_search("output-file");
+    let output_file = temp_output_file("output-file");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+
+    cmd.arg(fixture.path())
+        .arg("--lang")
+        .arg("en")
+        .arg("--output")
+        .arg(output_file.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+
+    let output = fs::read_to_string(output_file.path()).unwrap();
+
+    assert!(
+        output.contains("## binary_search"),
+        "missing heading:\n{output}"
+    );
+    assert!(
+        output.contains("FUNCTION binary_search"),
+        "missing pseudocode:\n{output}"
+    );
+    assert!(
+        output.contains("### Explanation"),
+        "missing explanation heading:\n{output}"
+    );
+    assert!(
+        output.contains("Purpose:"),
+        "missing explanation:\n{output}"
+    );
+}
+
+#[test]
 fn markdown_multi_function_output_uses_single_blank_line_between_sections() {
     let fixture = write_temp_python_file(
         "multi-function-spacing",
@@ -259,4 +306,143 @@ fn pseudocode_lang_overrides_lang() {
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("函数 binary_search"));
+}
+
+#[test]
+fn java_file_outputs_pseudocode_and_explanation() {
+    let fixture = format!("{}/fixtures/binary_search.java", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture).arg("--lang").arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("binary_search"))
+        .stdout(contains("WHILE"))
+        .stdout(contains("RETURN"))
+        .stdout(contains("Purpose:"))
+        .stdout(contains("Steps:"));
+}
+
+#[test]
+fn cpp_file_outputs_pseudocode_and_explanation() {
+    let fixture = format!("{}/fixtures/binary_search.cpp", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture).arg("--lang").arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("binary_search"))
+        .stdout(contains("WHILE"))
+        .stdout(contains("RETURN"))
+        .stdout(contains("Purpose:"))
+        .stdout(contains("Steps:"));
+}
+
+#[test]
+fn java_stdin_with_source_lang() {
+    let java_source = r#"class Algorithms {
+    int binary_search(int[] items, int target) {
+        int low = 0;
+        int high = items.length - 1;
+        while (low <= high) {
+            int mid = (low + high) / 2;
+            if (items[mid] == target) {
+                return mid;
+            } else if (items[mid] < target) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return -1;
+    }
+}"#;
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg("-")
+        .arg("--source-lang")
+        .arg("java")
+        .arg("--lang")
+        .arg("en")
+        .write_stdin(java_source);
+
+    cmd.assert()
+        .success()
+        .stdout(contains("binary_search"))
+        .stdout(contains("WHILE"))
+        .stdout(contains("Purpose:"));
+}
+
+#[test]
+fn cpp_stdin_with_source_lang() {
+    let cpp_source = r#"int binary_search(int items[], int target, int size) {
+    int low = 0;
+    int high = size - 1;
+    while (low <= high) {
+        int mid = (low + high) / 2;
+        if (items[mid] == target) {
+            return mid;
+        } else if (items[mid] < target) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return -1;
+}"#;
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg("-")
+        .arg("--source-lang")
+        .arg("cpp")
+        .arg("--lang")
+        .arg("en")
+        .write_stdin(cpp_source);
+
+    cmd.assert()
+        .success()
+        .stdout(contains("binary_search"))
+        .stdout(contains("WHILE"))
+        .stdout(contains("Purpose:"));
+}
+
+#[test]
+fn raw_fallback_emits_warning_to_stderr() {
+    // Use a Python snippet with a `yield` statement inside a function,
+    // which is known to produce Raw fallback nodes in the parser.
+    let fixture = write_temp_python_file(
+        "raw-warning",
+        r#"
+def f():
+    yield 42
+    return 1
+"#,
+    );
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path()).arg("--lang").arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("RETURN 1"))
+        .stderr(contains("warning:").and(contains("unparsed nodes")));
+}
+
+#[test]
+fn quiet_suppresses_raw_warning() {
+    let fixture = write_temp_python_file(
+        "quiet-suppresses-warning",
+        r#"
+def f():
+    yield 42
+    return 1
+"#,
+    );
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .arg("--lang")
+        .arg("en")
+        .arg("--quiet");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("RETURN 1"))
+        .stderr(contains("warning:").not());
 }
