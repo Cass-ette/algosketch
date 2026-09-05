@@ -115,8 +115,7 @@ Main spec §8 row 3 promises "panic caught, surfaced as exit 3, no raw
 backtrace", but the CLI has no `panic::set_hook` today — a real panic exits
 101. M5 installs a hook in `main()`: print `internal error: <payload>` to
 stderr and exit 3 (no backtrace). The hook is not exercised by assert_cmd
-tests; it is covered by a unit test asserting the message formatting if
-cheap, otherwise left to code review.
+tests; verification is manual (code review + a deliberate debug panic).
 
 ## 4. CI
 
@@ -161,6 +160,8 @@ CLI level (assert_cmd, additions):
 - Warning on stdin uses `<stdin>`.
 - `--pseudo-only` / `--explain-only` behave like their `--no-*` equivalents.
 - `--pseudo-only --no-pseudo` (and the explain analogue) → exit 1.
+- `--no-pseudo --no-explain` → exit 1 (by the equivalence rules this also
+  covers `--pseudo-only --explain-only`).
 - `ALGOSKETCH_LANG=zh` selects Chinese output; `PSEUDOCODE_LANG` is no
   longer honored (negative test).
 - Exit code 3 is not tested (internal-panic path).
