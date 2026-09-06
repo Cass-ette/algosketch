@@ -117,7 +117,6 @@ pub(crate) fn parse_un_op(text: &str) -> Result<UnOp> {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn record_raw_item(
     source: &str,
     node: tree_sitter::Node<'_>,
@@ -127,7 +126,6 @@ pub(crate) fn record_raw_item(
     Item::Raw(node_text(source, node).to_string())
 }
 
-#[allow(dead_code)]
 pub(crate) fn record_raw_stmt(
     source: &str,
     node: tree_sitter::Node<'_>,
@@ -137,7 +135,6 @@ pub(crate) fn record_raw_stmt(
     Stmt::Raw(node_text(source, node).to_string())
 }
 
-#[allow(dead_code)]
 pub(crate) fn record_raw_expr(
     source: &str,
     node: tree_sitter::Node<'_>,
