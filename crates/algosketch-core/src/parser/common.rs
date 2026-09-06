@@ -1,5 +1,6 @@
+use crate::diagnostics::RawDiagnostics;
 use crate::error::{PseudoError, Result};
-use crate::ir::{BinOp, UnOp};
+use crate::ir::{BinOp, Expr, Item, Stmt, UnOp};
 
 pub(crate) fn node_text<'a>(source: &'a str, node: tree_sitter::Node<'_>) -> &'a str {
     &source[node.start_byte()..node.end_byte()]
@@ -114,4 +115,34 @@ pub(crate) fn parse_un_op(text: &str) -> Result<UnOp> {
         "~" => Ok(UnOp::BitNot),
         _ => Err(parse_err(format!("unknown unary operator: {text}"))),
     }
+}
+
+#[allow(dead_code)]
+pub(crate) fn record_raw_item(
+    source: &str,
+    node: tree_sitter::Node<'_>,
+    diag: &mut RawDiagnostics,
+) -> Item {
+    diag.record_item(node.start_position().row + 1);
+    Item::Raw(node_text(source, node).to_string())
+}
+
+#[allow(dead_code)]
+pub(crate) fn record_raw_stmt(
+    source: &str,
+    node: tree_sitter::Node<'_>,
+    diag: &mut RawDiagnostics,
+) -> Stmt {
+    diag.record_statement(node.start_position().row + 1);
+    Stmt::Raw(node_text(source, node).to_string())
+}
+
+#[allow(dead_code)]
+pub(crate) fn record_raw_expr(
+    source: &str,
+    node: tree_sitter::Node<'_>,
+    diag: &mut RawDiagnostics,
+) -> Expr {
+    diag.record_expression(node.start_position().row + 1);
+    Expr::Raw(node_text(source, node).to_string())
 }
