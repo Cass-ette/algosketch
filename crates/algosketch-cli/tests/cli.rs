@@ -406,8 +406,6 @@ fn cpp_stdin_with_source_lang() {
 
 #[test]
 fn raw_fallback_emits_warning_to_stderr() {
-    // Use a Python snippet with a `yield` statement inside a function,
-    // which is known to produce Raw fallback nodes in the parser.
     let fixture = write_temp_python_file(
         "raw-warning",
         r#"
@@ -419,10 +417,48 @@ def f():
     let mut cmd = Command::cargo_bin("algosketch").unwrap();
     cmd.arg(fixture.path()).arg("--lang").arg("en");
 
+    cmd.assert().success().stdout(contains("RETURN 1")).stderr(
+        contains("warning: 1 unparsed nodes in")
+            .and(contains(fixture.path().display().to_string()))
+            .and(contains("(lines 3)")),
+    );
+}
+
+#[test]
+fn raw_warning_truncates_line_list_after_five() {
+    let fixture = write_temp_python_file(
+        "raw-warning-truncate",
+        r#"
+def f():
+    yield 1
+    yield 2
+    yield 3
+    yield 4
+    yield 5
+    yield 6
+"#,
+    );
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path()).arg("--lang").arg("en");
+
+    cmd.assert().success().stderr(
+        contains("warning: 6 unparsed nodes in").and(contains("(lines 3, 4, 5, 6, 7, +1 more)")),
+    );
+}
+
+#[test]
+fn raw_warning_uses_stdin_name_for_stdin_input() {
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg("-")
+        .arg("--source-lang")
+        .arg("python")
+        .arg("--lang")
+        .arg("en")
+        .write_stdin("def f():\n    yield 42\n    return 1\n");
+
     cmd.assert()
         .success()
-        .stdout(contains("RETURN 1"))
-        .stderr(contains("warning:").and(contains("unparsed nodes")));
+        .stderr(contains("unparsed nodes in <stdin>").and(contains("(lines 2)")));
 }
 
 #[test]

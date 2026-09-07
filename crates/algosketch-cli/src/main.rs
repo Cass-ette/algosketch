@@ -3,6 +3,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use algosketch_core::diagnostics::RawDiagnostics;
 use algosketch_core::ir::Item;
 use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
 use algosketch_core::renderer::{ExplainRenderer, PseudoRenderer};
@@ -134,13 +135,12 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
     };
 
     if !cli.quiet && raw_diag.total() > 0 {
-        eprintln!(
-            "warning: {} unparsed nodes preserved as raw fallback (items: {}, statements: {}, expressions: {})",
-            raw_diag.total(),
-            raw_diag.items,
-            raw_diag.statements,
-            raw_diag.expressions
-        );
+        let file = if cli.input == "-" {
+            "<stdin>"
+        } else {
+            cli.input.as_str()
+        };
+        eprintln!("{}", format_raw_warning(&raw_diag, file));
     }
 
     let natural_lang = resolve_natural_lang(cli.lang);
@@ -209,6 +209,27 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
     }
 
     Ok(())
+}
+
+const MAX_WARNING_LINES: usize = 5;
+
+fn format_raw_warning(diag: &RawDiagnostics, file: &str) -> String {
+    let lines = diag.sorted_unique_lines();
+    let shown: Vec<String> = lines
+        .iter()
+        .take(MAX_WARNING_LINES)
+        .map(|l| l.to_string())
+        .collect();
+    let mut line_list = shown.join(", ");
+    if lines.len() > MAX_WARNING_LINES {
+        line_list.push_str(&format!(", +{} more", lines.len() - MAX_WARNING_LINES));
+    }
+    format!(
+        "warning: {} unparsed nodes in {} (lines {})",
+        diag.total(),
+        file,
+        line_list
+    )
 }
 
 fn write_to_stdout(text: &str) -> Result<(), PseudoError> {
