@@ -14,9 +14,20 @@ impl CppParser {
     pub fn new() -> Self {
         Self
     }
+}
 
-    /// Parses source, returning the module and parse-time raw diagnostics.
-    pub fn parse_with_diag(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
+impl Default for CppParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LanguageParser for CppParser {
+    fn language(&self) -> SourceLang {
+        SourceLang::Cpp
+    }
+
+    fn parse(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_cpp::LANGUAGE.into())
@@ -45,22 +56,6 @@ impl CppParser {
             },
             diag,
         ))
-    }
-}
-
-impl Default for CppParser {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LanguageParser for CppParser {
-    fn language(&self) -> SourceLang {
-        SourceLang::Cpp
-    }
-
-    fn parse(&self, source: &str) -> Result<Module> {
-        self.parse_with_diag(source).map(|(module, _)| module)
     }
 }
 
@@ -567,7 +562,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         assert_eq!(module.source_language, SourceLang::Cpp);
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
@@ -594,7 +589,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -615,7 +610,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -632,7 +627,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -649,7 +644,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -666,7 +661,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -685,7 +680,7 @@ int f(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -719,7 +714,7 @@ int binary_search(vector<int>& nums, int target) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -741,7 +736,7 @@ int first_even(vector<int>& nums) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -784,7 +779,7 @@ int total(vector<int>& nums) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };

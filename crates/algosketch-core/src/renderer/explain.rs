@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn renders_empty_module() {
         let source = "";
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
         assert_eq!(out, "");
     }
@@ -494,7 +494,7 @@ def foo():
     while True:
         pass
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(renderer.has_loop(&f.body));
@@ -510,7 +510,7 @@ def foo():
     x = 1
     return x
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(!renderer.has_loop(&f.body));
@@ -527,7 +527,7 @@ def foo(flag):
         while True:
             pass
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(renderer.has_loop(&f.body));
@@ -542,7 +542,7 @@ def foo(flag):
 def factorial(n):
     return factorial(n - 1)
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(renderer.has_recursion(f));
@@ -557,7 +557,7 @@ def factorial(n):
 def factorial(n):
     return helper(n - 1)
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(!renderer.has_recursion(f));
@@ -572,7 +572,7 @@ def factorial(n):
 def factorial(n):
     return -factorial(n - 1)
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(renderer.has_recursion(f));
@@ -587,7 +587,7 @@ def factorial(n):
 def factorial(n):
     return helper(factorial(n - 1))
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             assert!(renderer.has_recursion(f));
@@ -603,7 +603,7 @@ def binary_search(nums, target):
     while True:
         pass
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             let purpose = renderer.detect_purpose(f);
@@ -621,7 +621,7 @@ def binary_search(nums, target):
     while True:
         pass
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::En);
         if let Some(Item::Function(f)) = module.items.first() {
             let purpose = renderer.detect_purpose(f);
@@ -647,7 +647,7 @@ def binary_search(nums, target):
             right = mid - 1
     return -1
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
         assert!(out.contains("函数 binary_search(nums, target)"));
         assert!(out.contains("目的：查找输入数据（迭代）"));
@@ -671,7 +671,7 @@ def binary_search(nums, target):
             right = mid - 1
     return -1
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::En).render_module(&module);
         assert!(out.contains("Function binary_search(nums, target)"));
         assert!(out.contains("Purpose: search for the input (iteratively)"));
@@ -689,7 +689,7 @@ def foo(x):
             return x
         x = x - 1
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
         assert!(out.contains("当 x > 0 时重复以下步骤"));
         assert!(out.contains("如果 x = 1，则"));
@@ -705,7 +705,7 @@ def foo(x):
             return x
         x = x - 1
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
         assert_eq!(
             out,
@@ -719,7 +719,7 @@ def foo(x):
 def foo():
     return 1
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
         assert!(out.contains("函数 foo()"));
         assert!(out.contains("步骤：\n  1. 返回 1\n"));
@@ -791,7 +791,7 @@ def foo(x):
     else:
         return 3
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = ExplainRenderer::new(NaturalLang::Zh).render_module(&module);
         assert!(out.contains("否则如果 x = 2，则"));
         assert!(out.contains("否则："));
@@ -803,7 +803,7 @@ def foo(x):
 def foo():
     x = 5
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::Zh);
         if let Some(Item::Function(f)) = module.items.first() {
             let mut out = String::new();
@@ -820,7 +820,7 @@ def foo():
 def foo():
     return 42
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let renderer = ExplainRenderer::new(NaturalLang::En);
         if let Some(Item::Function(f)) = module.items.first() {
             let mut out = String::new();
@@ -916,7 +916,7 @@ def foo(nums):
     mid = (left + right) // 2
     size = len(nums) - 1
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         if let Some(Item::Function(f)) = module.items.first() {
             // First assignment: mid = (left + right) // 2
             let first_assign = f.body.0.first().unwrap();
@@ -945,7 +945,7 @@ def foo(nums, target):
     if nums[mid] == target:
         return mid
 "#;
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         if let Some(Item::Function(f)) = module.items.first() {
             let if_stmt = f.body.0.first().unwrap();
             if let Stmt::If { cond, .. } = if_stmt {

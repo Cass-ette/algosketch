@@ -14,9 +14,20 @@ impl PythonParser {
     pub fn new() -> Self {
         Self
     }
+}
 
-    /// Parses source, returning the module and parse-time raw diagnostics.
-    pub fn parse_with_diag(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
+impl Default for PythonParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LanguageParser for PythonParser {
+    fn language(&self) -> SourceLang {
+        SourceLang::Python
+    }
+
+    fn parse(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_python::language())
@@ -52,22 +63,6 @@ impl PythonParser {
             },
             diag,
         ))
-    }
-}
-
-impl Default for PythonParser {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LanguageParser for PythonParser {
-    fn language(&self) -> SourceLang {
-        SourceLang::Python
-    }
-
-    fn parse(&self, source: &str) -> Result<Module> {
-        self.parse_with_diag(source).map(|(module, _)| module)
     }
 }
 
@@ -504,7 +499,7 @@ def binary_search(nums, target):
     return -1
 "#;
 
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -531,7 +526,7 @@ def first_even(nums):
     return -1
 "#;
 
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -571,7 +566,7 @@ def total(nums):
     return sum
 "#;
 
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -597,7 +592,7 @@ def scan(nums):
         break
 "#;
 
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -617,7 +612,7 @@ def rebuild_path(came_from, current):
     return current
 "#;
 
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };

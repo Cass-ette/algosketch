@@ -1,3 +1,4 @@
+use crate::diagnostics::RawDiagnostics;
 use crate::error::Result;
 use crate::ir::Module;
 use crate::SourceLang;
@@ -13,5 +14,5 @@ pub use python::PythonParser;
 
 pub trait LanguageParser {
     fn language(&self) -> SourceLang;
-    fn parse(&self, source: &str) -> Result<Module>;
+    fn parse(&self, source: &str) -> Result<(Module, RawDiagnostics)>;
 }

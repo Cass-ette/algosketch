@@ -14,9 +14,20 @@ impl JavaParser {
     pub fn new() -> Self {
         Self
     }
+}
 
-    /// Parses source, returning the module and parse-time raw diagnostics.
-    pub fn parse_with_diag(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
+impl Default for JavaParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LanguageParser for JavaParser {
+    fn language(&self) -> SourceLang {
+        SourceLang::Java
+    }
+
+    fn parse(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_java::LANGUAGE.into())
@@ -45,22 +56,6 @@ impl JavaParser {
             },
             diag,
         ))
-    }
-}
-
-impl Default for JavaParser {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LanguageParser for JavaParser {
-    fn language(&self) -> SourceLang {
-        SourceLang::Java
-    }
-
-    fn parse(&self, source: &str) -> Result<Module> {
-        self.parse_with_diag(source).map(|(module, _)| module)
     }
 }
 
@@ -444,7 +439,7 @@ class Solution {
 }
 "#;
 
-        let module = JavaParser::new().parse(source).unwrap();
+        let (module, _) = JavaParser::new().parse(source).unwrap();
         assert_eq!(module.source_language, SourceLang::Java);
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
@@ -484,7 +479,7 @@ class Solution {
 }
 "#;
 
-        let module = JavaParser::new().parse(source).unwrap();
+        let (module, _) = JavaParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -508,7 +503,7 @@ class Solution {
 }
 "#;
 
-        let module = JavaParser::new().parse(source).unwrap();
+        let (module, _) = JavaParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -532,7 +527,7 @@ class Solution {
 }
 "#;
 
-        let module = JavaParser::new().parse(source).unwrap();
+        let (module, _) = JavaParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -553,7 +548,7 @@ abstract class Base {
 }
 "#;
 
-        let module = JavaParser::new().parse(source).unwrap();
+        let (module, _) = JavaParser::new().parse(source).unwrap();
         assert_eq!(
             module.items.len(),
             1,
@@ -576,7 +571,7 @@ class Solution {
 }
 "#;
 
-        let module = JavaParser::new().parse(source).unwrap();
+        let (module, _) = JavaParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -600,7 +595,7 @@ class Solution {
 }
 "#;
 
-        let module = JavaParser::new().parse(source).unwrap();
+        let (module, _) = JavaParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };

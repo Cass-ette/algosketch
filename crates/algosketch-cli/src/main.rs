@@ -3,7 +3,6 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use algosketch_core::diagnostics::collect_raw_stats;
 use algosketch_core::ir::Item;
 use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
 use algosketch_core::renderer::{ExplainRenderer, PseudoRenderer};
@@ -128,23 +127,20 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
     let source_lang = resolve_source_lang(&cli)?;
     let source = read_source(&cli.input)?;
 
-    let module = match source_lang {
+    let (module, raw_diag) = match source_lang {
         SourceLang::Python => PythonParser::new().parse(&source)?,
         SourceLang::Java => JavaParser::new().parse(&source)?,
         SourceLang::Cpp => CppParser::new().parse(&source)?,
     };
 
-    if !cli.quiet {
-        let raw_stats = collect_raw_stats(&module);
-        if raw_stats.total() > 0 {
-            eprintln!(
-                "warning: {} unparsed nodes preserved as raw fallback (items: {}, statements: {}, expressions: {})",
-                raw_stats.total(),
-                raw_stats.items,
-                raw_stats.statements,
-                raw_stats.expressions
-            );
-        }
+    if !cli.quiet && raw_diag.total() > 0 {
+        eprintln!(
+            "warning: {} unparsed nodes preserved as raw fallback (items: {}, statements: {}, expressions: {})",
+            raw_diag.total(),
+            raw_diag.items,
+            raw_diag.statements,
+            raw_diag.expressions
+        );
     }
 
     let natural_lang = resolve_natural_lang(cli.lang);

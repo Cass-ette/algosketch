@@ -395,7 +395,7 @@ def binary_search(nums, target):
     return -1
 "#;
 
-        let module = PythonParser::new().parse(source).unwrap();
+        let (module, _) = PythonParser::new().parse(source).unwrap();
         let out = PseudoRenderer::new().render_module(&module);
 
         assert!(

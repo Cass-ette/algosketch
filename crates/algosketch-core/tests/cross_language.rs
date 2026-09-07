@@ -1,8 +1,8 @@
-use algosketch_core::diagnostics::collect_raw_stats;
+use algosketch_core::diagnostics::RawDiagnostics;
 use algosketch_core::ir::*;
 use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
 
-fn parse_fixture(algorithm: &str, ext: &str) -> Module {
+fn parse_fixture(algorithm: &str, ext: &str) -> (Module, RawDiagnostics) {
     let source = std::fs::read_to_string(format!("tests/fixtures/{algorithm}.{ext}"))
         .unwrap_or_else(|err| panic!("failed to read {algorithm}.{ext}: {err}"));
 
@@ -93,22 +93,22 @@ fn cross_language_skeletons_match_for_mvp_fixtures() {
     ];
 
     for algorithm in algorithms {
-        let py_module = parse_fixture(algorithm, "py");
-        let java_module = parse_fixture(algorithm, "java");
-        let cpp_module = parse_fixture(algorithm, "cpp");
+        let (py_module, py_diag) = parse_fixture(algorithm, "py");
+        let (java_module, java_diag) = parse_fixture(algorithm, "java");
+        let (cpp_module, cpp_diag) = parse_fixture(algorithm, "cpp");
 
         assert_eq!(
-            collect_raw_stats(&py_module).total(),
+            py_diag.total(),
             expected_raw_total(algorithm, "py"),
             "Python fixture raw fallback budget changed for {algorithm}"
         );
         assert_eq!(
-            collect_raw_stats(&java_module).total(),
+            java_diag.total(),
             expected_raw_total(algorithm, "java"),
             "Java fixture raw fallback budget changed for {algorithm}"
         );
         assert_eq!(
-            collect_raw_stats(&cpp_module).total(),
+            cpp_diag.total(),
             expected_raw_total(algorithm, "cpp"),
             "C++ fixture raw fallback budget changed for {algorithm}"
         );
