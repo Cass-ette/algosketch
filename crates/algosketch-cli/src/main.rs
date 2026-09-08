@@ -45,6 +45,14 @@ struct Cli {
     #[arg(long = "no-explain")]
     no_explain: bool,
 
+    /// Output pseudocode only (same as --no-explain).
+    #[arg(long = "pseudo-only")]
+    pseudo_only: bool,
+
+    /// Output explanation only (same as --no-pseudo).
+    #[arg(long = "explain-only")]
+    explain_only: bool,
+
     /// Natural language for explanations: zh | en | auto.
     #[arg(long = "lang", value_enum, default_value_t = NaturalLangArg::Auto)]
     lang: NaturalLangArg,
@@ -125,6 +133,25 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), PseudoError> {
+    if cli.pseudo_only && cli.no_pseudo {
+        return Err(PseudoError::Usage(
+            "--pseudo-only cannot be combined with --no-pseudo".into(),
+        ));
+    }
+    if cli.explain_only && cli.no_explain {
+        return Err(PseudoError::Usage(
+            "--explain-only cannot be combined with --no-explain".into(),
+        ));
+    }
+
+    let show_pseudo = !cli.no_pseudo && !cli.explain_only;
+    let show_explain = !cli.no_explain && !cli.pseudo_only;
+    if !show_pseudo && !show_explain {
+        return Err(PseudoError::Usage(
+            "both pseudocode and explanation output are disabled; enable at least one".into(),
+        ));
+    }
+
     let source_lang = resolve_source_lang(&cli)?;
     let source = read_source(&cli.input)?;
 
@@ -148,9 +175,6 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
         indent_width: cli.indent,
     };
     let explain_renderer = ExplainRenderer::new(natural_lang);
-
-    let show_pseudo = !cli.no_pseudo;
-    let show_explain = !cli.no_explain;
 
     let mut sections = Vec::new();
 
@@ -271,7 +295,9 @@ fn read_source(input: &str) -> Result<String, PseudoError> {
 
 fn exit_code_for(e: &PseudoError) -> u8 {
     match e {
-        PseudoError::UnsupportedLanguage(_) | PseudoError::UnknownLanguage => 1,
+        PseudoError::UnsupportedLanguage(_)
+        | PseudoError::UnknownLanguage
+        | PseudoError::Usage(_) => 1,
         PseudoError::Io(_) => 1,
         PseudoError::Parse { .. } => 2,
         PseudoError::Internal(_) => 3,
