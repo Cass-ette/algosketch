@@ -17,6 +17,7 @@ pub enum SourceLang {
     Python,
     Java,
     Cpp,
+    Go,
 }
 
 impl SourceLang {
@@ -26,6 +27,7 @@ impl SourceLang {
             "py" => Some(Self::Python),
             "java" => Some(Self::Java),
             "cpp" | "cc" | "cxx" | "hpp" | "h" => Some(Self::Cpp),
+            "go" => Some(Self::Go),
             _ => None,
         }
     }
@@ -35,6 +37,7 @@ impl SourceLang {
             Self::Python => "python",
             Self::Java => "java",
             Self::Cpp => "cpp",
+            Self::Go => "go",
         }
     }
 }
@@ -55,5 +58,10 @@ mod tests {
         let zh = NaturalLang::Zh;
         let en = NaturalLang::En;
         assert_ne!(zh, en);
+    }
+
+    #[test]
+    fn go_extension_maps_to_go() {
+        assert_eq!(SourceLang::from_extension("go"), Some(SourceLang::Go));
     }
 }

@@ -409,6 +409,15 @@ fn cpp_stdin_with_source_lang() {
 }
 
 #[test]
+fn go_file_auto_detected_and_runs() {
+    let fixture = format!("{}/fixtures/binary_search.go", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture).arg("--lang").arg("en");
+
+    cmd.assert().success();
+}
+
+#[test]
 fn raw_fallback_emits_warning_to_stderr() {
     let fixture = write_temp_python_file(
         "raw-warning",
