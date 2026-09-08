@@ -128,7 +128,7 @@ impl LanguageParser for GoParser {
     fn parse(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
         let mut parser = tree_sitter::Parser::new();
         parser
-            .set_language(&tree_sitter_go::language())
+            .set_language(&tree_sitter_go::LANGUAGE.into())
             .map_err(|e| PseudoError::Internal(format!("tree-sitter init: {e}")))?;
         let tree = parser
             .parse(source, None)
@@ -144,7 +144,7 @@ impl LanguageParser for GoParser {
             });
         }
 
-        let mut diag = RawDiagnostics::default();
+        let diag = RawDiagnostics::default(); // no mut yet: nothing records until Task 2
         let items = Vec::new(); // statements land in Task 2–4
         Ok((
             Module {
@@ -157,7 +157,7 @@ impl LanguageParser for GoParser {
 }
 ```
 
-(Include `use super::LanguageParser;` as the sibling files do — copy their exact import style.)
+**API note (verified against the crate):** tree-sitter-go 0.25 exports `pub const LANGUAGE: LanguageFn` — there is **no** `language()` function. Use `tree_sitter_go::LANGUAGE.into()` exactly as java.rs:33 / cpp.rs:33 do for their grammars. Import the trait as the siblings do (`crate::parser::LanguageParser`).
 
 - [ ] **Step 4: CST reality check (MANDATORY before Tasks 2–4)**
 
@@ -170,7 +170,7 @@ mod cst_dump {
     fn dump_binary_search() {
         let source = std::fs::read_to_string("../../algosketch-cli/fixtures/binary_search.go").unwrap();
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_go::language()).unwrap();
+        parser.set_language(&tree_sitter_go::LANGUAGE.into()).unwrap();
         let tree = parser.parse(&source, None).unwrap();
         panic!("{}", tree.root_node().to_sexp());
     }
@@ -180,12 +180,13 @@ mod cst_dump {
 Run: `cargo test -p algosketch-core cst_dump -- --nocapture 2>&1 | head -5`
 Expected: the panic message contains the full S-expression. **Delete this test afterward** (it exists only for grammar verification).
 
-Key things to confirm in the dump and note in your report:
-- `function_declaration` field names (name/parameters/result/body or equivalents)
-- `for_statement` clause fields (left/condition/right? or for_clause?) and how `for cond {}` (no clauses) and `for i := 0; i < n; i++ {}` differ
-- How `else if` is represented (nested `if_statement` under `alternative`? `else_if_clause`?)
-- What `i++` / `i--` parse as inside the for update clause
-- Kind names for: short_var_declaration, assignment_statement, var_declaration/const_declaration, if_statement, return_statement, expression_statement, call_expression, binary_expression, unary_expression, selector_expression, index_expression, parenthesized_expression, int_literal, interpreted_string_literal, identifier
+Grammar facts pre-extracted from tree-sitter-go 0.25's `node-types.json` (from the local registry cache — still confirm in the dump, they are the authority):
+- `function_declaration` / `method_declaration`: fields `name`, `parameters`, `receiver` (method only), `result`, `body`. Parameters are `parameter_declaration` nodes (fields `name`, `type`).
+- `if_statement`: fields `condition`, `consequence` (the then-block — singular), `alternative`. `else if` nests: `alternative` is directly an `if_statement` (no else_if_clause kind); plain `else` gives a `block`.
+- `for_statement`: field `body`, plus either a `for_clause` child (fields `initializer`, `condition`, `update`), a `range_clause` child (fields `left`, `right`), only a `condition` field, or nothing (infinite).
+- `i++` / `i--` parse as `inc_statement` / `dec_statement`.
+- Statement kinds: `expression_statement`, `short_var_declaration`, `assignment_statement`, `var_declaration`/`const_declaration` (containing `var_spec`/`const_spec`), `return_statement` (field `expression_list`), `break_statement`, `continue_statement`, `defer_statement`, `go_statement`, `labeled_statement`.
+- Expression kinds: `binary_expression` (field `operator`), `unary_expression` (field `operator`), `call_expression` (fields `function`, `arguments`), `selector_expression` (fields `operand`, `field`), `index_expression` (fields `operand`, `index`), `parenthesized_expression`, `identifier`, `int_literal`, `float_literal`, `interpreted_string_literal`, `raw_string_literal`.
 
 - [ ] **Step 5: Run tests**
 
@@ -271,9 +272,11 @@ In `go.rs`, following the structure of `java.rs` (trait impl calls a `collect` f
   - `package_clause` / `import_declaration` → skip silently (continue).
   - `function_declaration` / `method_declaration` → `parse_function(source, node, &mut diag)?` → `Item::Function`.
   - Anything else → `record_raw_item(source, child, &mut diag)` (spec §2 top-level handling).
-- `parse_function`: name from the `name` field (`node.child_by_field_name("name")`); params from the `parameters` field — a `parameter_list`; each `parameter` child contributes its `name` field(s) as a `Param { name, type_hint: None }`. For `method_declaration`, the `receiver` field is also a parameter_list — prepend its names first.
-- Body: the `body` field is a `block` → `parse_block(source, block, &mut diag)` (Task 3 makes it real; for now a stub returning `Block(vec![])` is enough for these tests — no, the tests above don't inspect bodies, so stub is fine; Task 3 fills it).
-- Import `record_raw_item` from `super::common`. `Span` from `node.start_byte()..node.end_byte()` like the siblings.
+- `parse_function`: name from the `name` field (`node.child_by_field_name("name")`); params from the `parameters` field — a `parameter_list` whose children are `parameter_declaration` nodes, each contributing its `name` field as a `Param { name, type_hint: None }`. For `method_declaration`, the `receiver` field is also a parameter_list — prepend its names first.
+- Body: the `body` field is a `block`. In THIS task, `parse_block` is a stub returning `Block(vec![])` (the tests here don't inspect bodies); Task 3 makes it real.
+- Import `record_raw_item` from `crate::parser::common` (match the siblings' import style). `Span` from `node.start_byte()..node.end_byte()` like the siblings.
+
+Pinning-test note: `returns_parse_error_for_invalid_go` already passes against the skeleton's `has_error` check, and `skips_package_and_import_silently` asserts `items.len() == 1` which needs the top-level walk — run the whole file's tests rather than a red-first ceremony for those two.
 
 - [ ] **Step 4: Run tests**
 
@@ -360,8 +363,8 @@ Free functions (mirror java.rs/cpp.rs shapes — all take `source`, `node`, `dia
   - `interpreted_string_literal` / `raw_string_literal` → `Literal::Str(text.trim_matches('"'))`
   - `float_literal` → `Literal::Float(text.to_string())`
   - `parenthesized_expression` → recurse into inner
-  - `binary_expression` → operator via `child_by_field_name("operator")` (or `find_anon_operator` if no field — dump decides); map with `parse_c_family_bin_op` (covers `== != < <= > >= && || ! + - * / % << >> & | ^`; `/` → `IntDiv` is correct for Go ints) — non-matching ops → `record_raw_expr`
-  - `unary_expression` → operator token (`!`, `-`, `^`, `&`…) → `parse_un_op`; `*p`/`&x` deref/addr-of → `record_raw_expr` (fixtures don't need them)
+  - `binary_expression` → operator via `child_by_field_name("operator")`; map with `parse_c_family_bin_op` (covers `== != < <= > >= && || + - * / % << >> & | ^`; `/` → `IntDiv` is correct for Go ints) — non-matching ops → `record_raw_expr`
+  - `unary_expression` → operator token (`!`, `-`) → `parse_un_op`; any operator `parse_un_op` does NOT recognize (e.g. `^`, `&`, `*` deref) → `record_raw_expr` — **never** a hard error (spec: unrecognized syntax always falls back)
   - `call_expression` → `Expr::Call { callee: function field, args: arguments field's named exprs }` (type conversions like `T(x)` also land here — fine)
   - `index_expression` → `Expr::Index { obj: operand, index }`
   - `selector_expression` → `Expr::Field { obj: operand, name: field }`
@@ -441,16 +444,18 @@ git commit -m "feat(core): parse Go statements and expressions"
 
 - [ ] **Step 2: Run to verify they fail** — control-flow statements currently `record_raw_stmt`.
 
-- [ ] **Step 3: Implement** (dispatch arms in `parse_stmt`; shapes per Task 1's dump)
+- [ ] **Step 3: Implement** (dispatch arms in `parse_stmt`; grammar shapes per Task 1's pre-extracted facts)
 
-- `if_statement`: `condition` field → `parse_expr`; `consequences` → `parse_block`; `alternative`:
-  - an `if_statement`/`else_if_clause` (dump decides) → `else_block = Block(vec![nested If])` (matches python/java nesting — REQUIRED for skeleton parity)
-  - a block/`else_clause` → `parse_block`
-- `for_statement`:
-  - has init clause (`left` field or `for_clause` — dump decides): init → `parse_stmt` (Box), condition → `parse_expr`, update clause → `record_raw_expr` (Raw — cpp/java parity, drives fixture budgets), body → `parse_block` → `ForKind::CStyle`
-  - only a condition: `Stmt::While`
-  - `range_expression` with a single-name left (`for v := range xs` / `for _ := range xs`): `ForKind::ForEach { var, iter }`; two names → `record_raw_stmt` on the whole for (test above)
+- `if_statement`: `condition` field → `parse_expr`; `consequence` (singular) → `parse_block`; `alternative`:
+  - an `if_statement` (tree-sitter-go nests else-if directly) → `else_block = Block(vec![nested If])` (matches python/java nesting — REQUIRED for skeleton parity)
+  - a `block` → `parse_block`
+- `for_statement` (field `body` for the block; the clause shape decides the kind):
+  - `for_clause` child (fields `initializer`, `condition`, `update`): initializer → `parse_stmt` (Box), condition → `parse_expr`, update → `record_raw_expr` (Raw — cpp/java parity, drives fixture budgets) → `ForKind::CStyle`
+  - only a `condition` field (no clause children): `Stmt::While`
+  - `range_clause` child (fields `left`, `right`): single name on the left (`for v := range xs` / `for _ := range xs`) → `ForKind::ForEach { var, iter: right }`; two names on the left → `record_raw_stmt` on the whole for statement (test above)
   - nothing at all: `Stmt::While { cond: Literal::Bool(true) }`
+
+Pinning-test note: `two_var_range_falls_back_to_raw` passes even before this task (unhandled `for` already hits `record_raw_stmt`) — it locks the behavior in.
 
 - [ ] **Step 4: Run tests** — `cargo test -p algosketch-core` → PASS; clippy; fmt.
 
@@ -658,7 +663,7 @@ Run: `cargo test --workspace` → PASS. clippy, fmt.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/algosketch-core/tests
+git add crates/algosketch-core/tests/fixtures crates/algosketch-core/tests/cross_language.rs
 git commit -m "test(core): add Go fixtures and four-language skeleton parity"
 ```
 
@@ -667,7 +672,7 @@ git commit -m "test(core): add Go fixtures and four-language skeleton parity"
 **Files:**
 - Modify: `crates/algosketch-cli/tests/cli.rs`
 
-- [ ] **Step 1: Write the failing tests** (extend `go_file_auto_detected_and_runs` from Task 1 and add stdin + content assertions)
+- [ ] **Step 1: Write the pinning tests** (two NEW tests — keep Task 1's `go_file_auto_detected_and_runs` as-is)
 
 ```rust
 #[test]
@@ -703,11 +708,9 @@ fn go_stdin_with_source_lang() {
 }
 ```
 
-- [ ] **Step 2: Run to verify they fail** — Task 1's parser skeleton returns no items, so `FUNCTION` is absent → FAIL.
+- [ ] **Step 2: Run them** — by this point Tasks 2–6 already provide the behavior, so both pass immediately (they are pinning tests). If either fails, something upstream is wrong — fix upstream, not the tests.
 
-- [ ] **Step 3: Verify they pass** (Tasks 2–6 already provide the behavior — if these fail, something upstream is wrong; fix upstream, not the tests).
-
-Run: `cargo test -p algosketch-cli --test cli` → PASS (31 tests). clippy, fmt.
+Run: `cargo test -p algosketch-cli --test cli` → PASS (30 tests: 27 pre-existing + Task 1's + these two). clippy, fmt.
 
 - [ ] **Step 4: Commit**
 
@@ -777,12 +780,14 @@ In `docs/superpowers/specs/2026-05-20-algosketch-design.md`:
 2. §3 diagram caption "Python / Java / C++ adapters" → "Python / Java / C++ / Go adapters".
 3. §4 crate layout: add `│   │   │   │   └── go.rs` under parser/ (keep the tree aligned).
 4. §7 CLI: `-l, --source-lang <LANG>      python | java | cpp (auto from extension)` → `python | java | cpp | go`; extension table add `| \`.go\` | Go |`.
-5. §9: "15 samples (5 algorithms × 3 languages)" → "20 samples (5 algorithms × 4 languages)".
-6. §10: append milestone row `| M6 | Go + Apache-2.0 | Go parser + fixtures in; 4-language skeleton test green; relicensed. |` and after the table line about v0.1.0 add: `v0.2.0 = M6 (2026-09).` Change the future-track lines to `- v0.3: LLM provider hooked in for \`Raw\` node fallback.` / `- v0.4: WASM build + minimal web UI.`
+5. §9: "15 samples (5 algorithms × 3 languages)" → "20 samples (5 algorithms × 4 languages)"; also the bullet "the same algorithm in three languages must produce equivalent control-flow IR skeletons" → "four languages" (~line 373).
+6. §10: append milestone row `| M6 | Go + Apache-2.0 | Go parser + fixtures in; 4-language skeleton test green; relicensed. |`; update the completion line "All milestones M1–M5 complete; v0.1.0 tagged 2026-09." → "All milestones M1–M6 complete; v0.2.0 tagged 2026-09." Change the future-track lines to `- v0.3: LLM provider hooked in for \`Raw\` node fallback.` / `- v0.4: WASM build + minimal web UI.`
+
+Note: the §3 diagram edit sits inside an ASCII box with a right `│` border — keep the border aligned (trim/adjust trailing spaces after lengthening the caption).
 
 - [ ] **Step 3: README language-count updates**
 
-Run `grep -n "Python, Java, or C++\|Python / Java / C++\|Python、Java\|三种 tree-sitter\|三种源语言" README.md` and update every hit to the four-language wording (EN + 中文 sections both). Sanity-check usage examples still match (`algosketch --help`).
+Run `grep -n "Python, Java, or C++\|Python, Java, and C++\|Python / Java / C++\|Python、Java\|三种 tree-sitter\|三种源语言" README.md` and update every hit to the four-language wording (EN + 中文 sections both — "and C++" and "or C++" spellings both occur). Also update the README status line ("v0.1 MVP" → "v0.2 — supports Python, Java, C++, and Go" or equivalent) in both language sections. Sanity-check usage examples still match (`algosketch --help`).
 
 - [ ] **Step 4: Full suite**
 
