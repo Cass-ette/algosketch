@@ -121,14 +121,28 @@ fn detect_locale() -> NaturalLang {
     NaturalLang::En
 }
 
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        eprintln!("internal error: {payload}");
+    }));
+}
+
 fn main() -> ExitCode {
+    install_panic_hook();
     let cli = Cli::parse();
-    match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(cli))) {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(e)) => {
             eprintln!("error: {e}");
             ExitCode::from(exit_code_for(&e))
         }
+        Err(_) => ExitCode::from(3),
     }
 }
 
