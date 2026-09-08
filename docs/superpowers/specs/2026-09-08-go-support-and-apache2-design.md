@@ -27,7 +27,7 @@ parse-time `RawDiagnostics` (every `Raw` construction goes through
 | `func f(a T, b U) V { … }` (no receiver) | `Item::Function` |
 | `func (r *T) f(…) { … }` (method) | `Item::Function`, receiver prepended to params as a normal parameter named `r` |
 | `x := expr` (single name) | `Stmt::VarDecl` (it declares — mirrors Java/C++ decl lines) |
-| `a, b := v1, v2` (multi-name) | `Stmt::Assign` with tuple target/value (same as Python's tuple assign; required for `binary_search` skeleton parity) |
+| `a, b := v1, v2` (multi-name) | `Stmt::Assign` with tuple target/value (same as Python's tuple assign; no current fixture uses it) |
 | `x = expr` | `Stmt::Assign` |
 | `a, b = b, a` (multi-assign) | `Stmt::Assign` with tuple target/value |
 | `var x T`, `var x T = v`, `const x = v` | `Stmt::VarDecl` |
