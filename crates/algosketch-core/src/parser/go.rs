@@ -1,6 +1,7 @@
 use crate::diagnostics::RawDiagnostics;
 use crate::error::{PseudoError, Result};
-use crate::ir::Module;
+use crate::ir::*;
+use crate::parser::common::{node_text, parse_err, record_raw_item};
 use crate::parser::LanguageParser;
 use crate::SourceLang;
 
@@ -42,8 +43,19 @@ impl LanguageParser for GoParser {
             });
         }
 
-        let diag = RawDiagnostics::default(); // no mut yet: nothing records until Task 2
-        let items = Vec::new(); // statements land in Task 2–4
+        let mut diag = RawDiagnostics::default();
+        let mut items = Vec::new();
+        for i in 0..root.named_child_count() {
+            let child = root.named_child(i).unwrap();
+            match child.kind() {
+                // package/import carry no algorithmic content: silent skip.
+                "package_clause" | "import_declaration" => continue,
+                "function_declaration" | "method_declaration" => {
+                    items.push(parse_function(source, child, &mut diag)?);
+                }
+                _ => items.push(record_raw_item(source, child, &mut diag)),
+            }
+        }
         Ok((
             Module {
                 source_language: SourceLang::Go,
@@ -51,5 +63,114 @@ impl LanguageParser for GoParser {
             },
             diag,
         ))
+    }
+}
+
+fn parse_function(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Item> {
+    let name_node = node
+        .child_by_field_name("name")
+        .ok_or_else(|| parse_err("function missing name"))?;
+    let params_node = node
+        .child_by_field_name("parameters")
+        .ok_or_else(|| parse_err("function missing parameters"))?;
+    let body_node = node
+        .child_by_field_name("body")
+        .ok_or_else(|| parse_err("function missing body"))?;
+
+    let mut params = Vec::new();
+    // A method's receiver list comes first: the receiver reads as the
+    // leading parameter of the function.
+    if let Some(receiver) = node.child_by_field_name("receiver") {
+        params.extend(parse_param_list(source, receiver));
+    }
+    params.extend(parse_param_list(source, params_node));
+
+    Ok(Item::Function(Function {
+        name: node_text(source, name_node).to_string(),
+        params,
+        return_type: None,
+        body: parse_block(source, body_node, diag)?,
+        span: Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+        },
+    }))
+}
+
+fn parse_param_list(source: &str, node: tree_sitter::Node) -> Vec<Param> {
+    let mut params = Vec::new();
+    for i in 0..node.named_child_count() {
+        let child = node.named_child(i).unwrap();
+        if child.kind() == "parameter_declaration" {
+            if let Some(name) = child.child_by_field_name("name") {
+                params.push(Param {
+                    name: node_text(source, name).to_string(),
+                    type_hint: None,
+                });
+            }
+        }
+    }
+    params
+}
+
+/// Stub for Task 2: bodies stay empty until statement parsing lands in Task 3.
+/// Go `block` nodes wrap their statements in a single `statement_list` child
+/// (unlike java/cpp blocks), which Task 3's implementation must descend through.
+fn parse_block(
+    _source: &str,
+    _node: tree_sitter::Node,
+    _diag: &mut RawDiagnostics,
+) -> Result<Block> {
+    Ok(Block(vec![]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Item;
+
+    #[test]
+    fn parses_go_function_shape() {
+        let source = "package main\n\nfunc add(a int, b int) int {\n\treturn a + b\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.total(), 0);
+        assert_eq!(module.items.len(), 1);
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(f.name, "add");
+        assert_eq!(f.params.len(), 2);
+        assert_eq!(f.params[0].name, "a");
+    }
+
+    #[test]
+    fn parses_go_method_receiver_as_param() {
+        let source = "package main\n\nfunc (n *Node) value() int {\n\treturn n.v\n}\n";
+        let (module, _) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(f.name, "value");
+        assert_eq!(f.params.len(), 1);
+        assert_eq!(f.params[0].name, "n");
+    }
+
+    #[test]
+    fn skips_package_and_import_silently() {
+        let source = "package main\n\nimport \"fmt\"\n\nfunc f() {\n\tfmt.Println(1)\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.total(), 0); // package/import: silent, no Raw
+        assert_eq!(module.items.len(), 1);
+    }
+
+    #[test]
+    fn returns_parse_error_for_invalid_go() {
+        let source = "func broken( {\n";
+        let err = GoParser::new().parse(source).unwrap_err();
+        assert!(matches!(err, crate::error::PseudoError::Parse { .. }));
     }
 }
