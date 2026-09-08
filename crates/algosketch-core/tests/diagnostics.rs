@@ -1,53 +1,28 @@
-use algosketch_core::diagnostics::{collect_raw_stats, RawStats};
-use algosketch_core::ir::*;
-use algosketch_core::SourceLang;
+use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
 
 #[test]
-fn collect_raw_stats_counts_nested_items_statements_and_expressions() {
-    let module = Module {
-        source_language: SourceLang::Python,
-        items: vec![
-            Item::Raw("decorator-like top-level fallback".into()),
-            Item::Function(Function {
-                name: "f".into(),
-                params: vec![],
-                return_type: None,
-                body: Block(vec![
-                    Stmt::Raw("yield 1".into()),
-                    Stmt::Assign {
-                        target: Expr::Ident("x".into()),
-                        value: Expr::Binary {
-                            op: BinOp::Add,
-                            lhs: Box::new(Expr::Raw("unsupported_left".into())),
-                            rhs: Box::new(Expr::Literal(Literal::Int(1))),
-                        },
-                    },
-                    Stmt::For {
-                        kind: ForKind::CStyle {
-                            init: Box::new(Stmt::Raw("int i = 0".into())),
-                            cond: Expr::Raw("i < n".into()),
-                            step: Expr::Raw("i++".into()),
-                        },
-                        body: Block(vec![Stmt::ExprStmt(Expr::Call {
-                            callee: Box::new(Expr::Ident("visit".into())),
-                            args: vec![Expr::Raw("unsupported_arg".into())],
-                        })]),
-                    },
-                ]),
-                span: Span::default(),
-            }),
-        ],
-    };
+fn python_reports_raw_statement_line() {
+    let source = "\ndef f():\n    yield 42\n    return 1\n";
+    let (_, diag) = PythonParser::new().parse(source).unwrap();
+    assert_eq!(diag.total(), 1);
+    assert_eq!(diag.statements, 1);
+    assert_eq!(diag.sorted_unique_lines(), vec![3]);
+}
 
-    let stats = collect_raw_stats(&module);
+#[test]
+fn java_reports_raw_statement_line() {
+    let source = "class C {\n    int sum(int[] values) {\n        int total = 0;\n        total += values[0];\n        return total;\n    }\n}\n";
+    let (_, diag) = JavaParser::new().parse(source).unwrap();
+    assert_eq!(diag.total(), 1);
+    assert_eq!(diag.statements, 1);
+    assert_eq!(diag.sorted_unique_lines(), vec![4]);
+}
 
-    assert_eq!(
-        stats,
-        RawStats {
-            items: 1,
-            statements: 2,
-            expressions: 4,
-        }
-    );
-    assert_eq!(stats.total(), 7);
+#[test]
+fn cpp_reports_raw_statement_line() {
+    let source = "int probe(int x) {\n    int *p;\n    return x;\n}\n";
+    let (_, diag) = CppParser::new().parse(source).unwrap();
+    assert_eq!(diag.total(), 1);
+    assert_eq!(diag.statements, 1);
+    assert_eq!(diag.sorted_unique_lines(), vec![2]);
 }

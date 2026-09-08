@@ -1,8 +1,9 @@
+use crate::diagnostics::RawDiagnostics;
 use crate::error::{PseudoError, Result};
 use crate::ir::*;
 use crate::parser::common::{
     find_anon_operator, named_child_by_kind, named_children_of_kind, node_text,
-    parse_c_family_bin_op, parse_err, parse_un_op,
+    parse_c_family_bin_op, parse_err, parse_un_op, record_raw_expr, record_raw_stmt,
 };
 use crate::parser::LanguageParser;
 use crate::SourceLang;
@@ -26,7 +27,7 @@ impl LanguageParser for CppParser {
         SourceLang::Cpp
     }
 
-    fn parse(&self, source: &str) -> Result<Module> {
+    fn parse(&self, source: &str) -> Result<(Module, RawDiagnostics)> {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_cpp::LANGUAGE.into())
@@ -45,30 +46,43 @@ impl LanguageParser for CppParser {
             });
         }
 
+        let mut diag = RawDiagnostics::default();
         let mut items = Vec::new();
-        collect_functions(source, root, &mut items)?;
-        Ok(Module {
-            source_language: SourceLang::Cpp,
-            items,
-        })
+        collect_functions(source, root, &mut items, &mut diag)?;
+        Ok((
+            Module {
+                source_language: SourceLang::Cpp,
+                items,
+            },
+            diag,
+        ))
     }
 }
 
-fn collect_functions(source: &str, node: tree_sitter::Node, items: &mut Vec<Item>) -> Result<()> {
+fn collect_functions(
+    source: &str,
+    node: tree_sitter::Node,
+    items: &mut Vec<Item>,
+    diag: &mut RawDiagnostics,
+) -> Result<()> {
     if node.kind() == "function_definition" {
         if node.child_by_field_name("body").is_some() {
-            items.push(parse_function(source, node)?);
+            items.push(parse_function(source, node, diag)?);
         }
         return Ok(());
     }
 
     for i in 0..node.named_child_count() {
-        collect_functions(source, node.named_child(i).unwrap(), items)?;
+        collect_functions(source, node.named_child(i).unwrap(), items, diag)?;
     }
     Ok(())
 }
 
-fn parse_function(source: &str, node: tree_sitter::Node) -> Result<Item> {
+fn parse_function(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Item> {
     let declarator = node
         .child_by_field_name("declarator")
         .ok_or_else(|| parse_err("function_definition missing declarator"))?;
@@ -111,34 +125,34 @@ fn parse_function(source: &str, node: tree_sitter::Node) -> Result<Item> {
         return_type: node
             .child_by_field_name("type")
             .map(|ty| TypeHint(node_text(source, ty).to_string())),
-        body: parse_block(source, body_node)?,
+        body: parse_block(source, body_node, diag)?,
         span: Span::default(),
     }))
 }
 
-fn parse_block(source: &str, node: tree_sitter::Node) -> Result<Block> {
+fn parse_block(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Block> {
     if node.kind() != "compound_statement" {
-        return Ok(Block(vec![parse_stmt(source, node)?]));
+        return Ok(Block(vec![parse_stmt(source, node, diag)?]));
     }
 
     let mut stmts = Vec::new();
     for i in 0..node.named_child_count() {
-        stmts.push(parse_stmt(source, node.named_child(i).unwrap())?);
+        stmts.push(parse_stmt(source, node.named_child(i).unwrap(), diag)?);
     }
     Ok(Block(stmts))
 }
 
-fn parse_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
+fn parse_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Stmt> {
     match node.kind() {
-        "declaration" => parse_var_decl(source, node),
+        "declaration" => parse_var_decl(source, node, diag),
         "expression_statement" => {
             let Some(inner) = node.named_child(0) else {
-                return Ok(Stmt::Raw(node_text(source, node).to_string()));
+                return Ok(record_raw_stmt(source, node, diag));
             };
             if inner.kind() == "assignment_expression" {
-                parse_assignment_stmt(source, node, inner)
+                parse_assignment_stmt(source, node, inner, diag)
             } else {
-                Ok(Stmt::ExprStmt(parse_expr(source, inner)?))
+                Ok(Stmt::ExprStmt(parse_expr(source, inner, diag)?))
             }
         }
         "while_statement" => {
@@ -149,30 +163,34 @@ fn parse_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
                 .child_by_field_name("body")
                 .ok_or_else(|| parse_err("while missing body"))?;
             Ok(Stmt::While {
-                cond: parse_condition(source, cond)?,
-                body: parse_block(source, body)?,
+                cond: parse_condition(source, cond, diag)?,
+                body: parse_block(source, body, diag)?,
             })
         }
-        "if_statement" => parse_if_stmt(source, node),
+        "if_statement" => parse_if_stmt(source, node, diag),
         "return_statement" => {
             let expr = node
                 .named_child(0)
-                .map(|child| parse_expr(source, child))
+                .map(|child| parse_expr(source, child, diag))
                 .transpose()?;
             Ok(Stmt::Return(expr))
         }
         "break_statement" => Ok(Stmt::Break),
         "continue_statement" => Ok(Stmt::Continue),
-        "for_statement" => parse_for_stmt(source, node),
-        "for_range_loop" => parse_range_for_stmt(source, node),
-        _ => Ok(Stmt::Raw(node_text(source, node).to_string())),
+        "for_statement" => parse_for_stmt(source, node, diag),
+        "for_range_loop" => parse_range_for_stmt(source, node, diag),
+        _ => Ok(record_raw_stmt(source, node, diag)),
     }
 }
 
-fn parse_var_decl(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
+fn parse_var_decl(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Stmt> {
     let init_declarators = named_children_of_kind(node, "init_declarator");
     if init_declarators.len() > 1 {
-        return Ok(Stmt::Raw(node_text(source, node).to_string()));
+        return Ok(record_raw_stmt(source, node, diag));
     }
 
     let (declarator, init) = if let Some(init_declarator) = init_declarators.first() {
@@ -181,19 +199,19 @@ fn parse_var_decl(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
             .ok_or_else(|| parse_err("init_declarator missing declarator"))?;
         let init = init_declarator
             .child_by_field_name("value")
-            .map(|value| parse_expr(source, value))
+            .map(|value| parse_expr(source, value, diag))
             .transpose()?;
         (declarator, init)
     } else {
         let declarators = declaration_declarators(node);
         if declarators.len() != 1 {
-            return Ok(Stmt::Raw(node_text(source, node).to_string()));
+            return Ok(record_raw_stmt(source, node, diag));
         }
         (declarators[0], None)
     };
 
     if declarator.kind() != "identifier" {
-        return Ok(Stmt::Raw(node_text(source, node).to_string()));
+        return Ok(record_raw_stmt(source, node, diag));
     }
     Ok(Stmt::VarDecl(VarDecl {
         name: node_text(source, declarator).to_string(),
@@ -208,12 +226,13 @@ fn parse_assignment_stmt(
     source: &str,
     statement: tree_sitter::Node,
     node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
 ) -> Result<Stmt> {
     let op_node = node
         .child_by_field_name("operator")
         .ok_or_else(|| parse_err("assignment missing operator"))?;
     if node_text(source, op_node) != "=" {
-        return Ok(Stmt::Raw(node_text(source, statement).to_string()));
+        return Ok(record_raw_stmt(source, statement, diag));
     }
     let target = node
         .child_by_field_name("left")
@@ -222,12 +241,12 @@ fn parse_assignment_stmt(
         .child_by_field_name("right")
         .ok_or_else(|| parse_err("assignment missing value"))?;
     Ok(Stmt::Assign {
-        target: parse_expr(source, target)?,
-        value: parse_expr(source, value)?,
+        target: parse_expr(source, target, diag)?,
+        value: parse_expr(source, value, diag)?,
     })
 }
 
-fn parse_if_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
+fn parse_if_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Stmt> {
     let cond = node
         .child_by_field_name("condition")
         .ok_or_else(|| parse_err("if missing condition"))?;
@@ -237,64 +256,76 @@ fn parse_if_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
         .ok_or_else(|| parse_err("if missing consequence"))?;
     let else_block = node
         .child_by_field_name("alternative")
-        .map(|alternative| parse_else_alternative(source, alternative))
+        .map(|alternative| parse_else_alternative(source, alternative, diag))
         .transpose()?;
 
     Ok(Stmt::If {
-        cond: parse_condition(source, cond)?,
-        then_block: parse_block(source, consequence)?,
+        cond: parse_condition(source, cond, diag)?,
+        then_block: parse_block(source, consequence, diag)?,
         else_block,
     })
 }
 
-fn parse_else_alternative(source: &str, node: tree_sitter::Node) -> Result<Block> {
+fn parse_else_alternative(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Block> {
     if node.kind() == "if_statement" {
-        return parse_if_stmt(source, node).map(|stmt| Block(vec![stmt]));
+        return parse_if_stmt(source, node, diag).map(|stmt| Block(vec![stmt]));
     }
     if node.kind() == "else_clause" {
         if let Some(child) = node.named_child(0) {
             if child.kind() == "if_statement" {
-                return parse_if_stmt(source, child).map(|stmt| Block(vec![stmt]));
+                return parse_if_stmt(source, child, diag).map(|stmt| Block(vec![stmt]));
             }
-            return parse_block(source, child);
+            return parse_block(source, child, diag);
         }
     }
-    parse_block(source, node)
+    parse_block(source, node, diag)
 }
 
-fn parse_for_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
+fn parse_for_stmt(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Stmt> {
     let Some(init) = node.child_by_field_name("initializer") else {
-        return Ok(Stmt::Raw(node_text(source, node).to_string()));
+        return Ok(record_raw_stmt(source, node, diag));
     };
     let Some(cond) = node.child_by_field_name("condition") else {
-        return Ok(Stmt::Raw(node_text(source, node).to_string()));
+        return Ok(record_raw_stmt(source, node, diag));
     };
     let Some(update) = node.child_by_field_name("update") else {
-        return Ok(Stmt::Raw(node_text(source, node).to_string()));
+        return Ok(record_raw_stmt(source, node, diag));
     };
     let body = node
         .child_by_field_name("body")
         .ok_or_else(|| parse_err("for missing body"))?;
 
     let init = if init.kind() == "declaration" {
-        parse_var_decl(source, init)?
+        parse_var_decl(source, init, diag)?
     } else if init.kind() == "assignment_expression" {
-        parse_assignment_stmt(source, init, init)?
+        parse_assignment_stmt(source, init, init, diag)?
     } else {
-        Stmt::ExprStmt(parse_expr(source, init)?)
+        Stmt::ExprStmt(parse_expr(source, init, diag)?)
     };
 
     Ok(Stmt::For {
         kind: ForKind::CStyle {
             init: Box::new(init),
-            cond: parse_expr(source, cond)?,
-            step: parse_expr(source, update)?,
+            cond: parse_expr(source, cond, diag)?,
+            step: parse_expr(source, update, diag)?,
         },
-        body: parse_block(source, body)?,
+        body: parse_block(source, body, diag)?,
     })
 }
 
-fn parse_range_for_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
+fn parse_range_for_stmt(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Stmt> {
     let name = node
         .child_by_field_name("declarator")
         .and_then(declarator_name_node)
@@ -309,31 +340,35 @@ fn parse_range_for_stmt(source: &str, node: tree_sitter::Node) -> Result<Stmt> {
     Ok(Stmt::For {
         kind: ForKind::ForEach {
             var: node_text(source, name).to_string(),
-            iter: parse_expr(source, iter)?,
+            iter: parse_expr(source, iter, diag)?,
         },
-        body: parse_block(source, body)?,
+        body: parse_block(source, body, diag)?,
     })
 }
 
-fn parse_condition(source: &str, node: tree_sitter::Node) -> Result<Expr> {
+fn parse_condition(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Expr> {
     if node.kind() == "condition_clause" {
         let inner = node
             .named_child(0)
             .ok_or_else(|| parse_err("condition_clause empty"))?;
-        parse_expr(source, inner)
+        parse_expr(source, inner, diag)
     } else {
-        parse_expr(source, node)
+        parse_expr(source, node, diag)
     }
 }
 
-fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
+fn parse_expr(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Expr> {
     match node.kind() {
         "identifier" => Ok(Expr::Ident(node_text(source, node).to_string())),
         "number_literal" => {
             let text = node_text(source, node);
             match text.parse::<i64>() {
                 Ok(n) => Ok(Expr::Literal(Literal::Int(n))),
-                Err(_) => Ok(Expr::Raw(text.to_string())),
+                Err(_) => Ok(record_raw_expr(source, node, diag)),
             }
         }
         "string_literal" => {
@@ -345,7 +380,7 @@ fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
         "true" => Ok(Expr::Literal(Literal::Bool(true))),
         "false" => Ok(Expr::Literal(Literal::Bool(false))),
         "nullptr" | "nullptr_literal" => Ok(Expr::Literal(Literal::None)),
-        "binary_expression" => parse_binary_expr(source, node),
+        "binary_expression" => parse_binary_expr(source, node, diag),
         "unary_expression" => {
             let op_text = find_anon_operator(source, node)
                 .ok_or_else(|| parse_err("unary_expression missing operator"))?;
@@ -356,16 +391,16 @@ fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
                 .ok_or_else(|| parse_err("unary_expression missing operand"))?;
             Ok(Expr::Unary {
                 op,
-                expr: Box::new(parse_expr(source, operand)?),
+                expr: Box::new(parse_expr(source, operand, diag)?),
             })
         }
         "parenthesized_expression" => {
             let inner = node
                 .named_child(0)
                 .ok_or_else(|| parse_err("parenthesized_expression empty"))?;
-            parse_expr(source, inner)
+            parse_expr(source, inner, diag)
         }
-        "call_expression" => parse_call_expr(source, node),
+        "call_expression" => parse_call_expr(source, node, diag),
         "subscript_expression" => {
             let obj = node
                 .child_by_field_name("argument")
@@ -378,8 +413,8 @@ fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
                 .named_child(0)
                 .ok_or_else(|| parse_err("subscript_argument_list empty"))?;
             Ok(Expr::Index {
-                obj: Box::new(parse_expr(source, obj)?),
-                index: Box::new(parse_expr(source, index)?),
+                obj: Box::new(parse_expr(source, obj, diag)?),
+                index: Box::new(parse_expr(source, index, diag)?),
             })
         }
         "field_expression" => {
@@ -390,18 +425,20 @@ fn parse_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
                 .child_by_field_name("field")
                 .ok_or_else(|| parse_err("field_expression missing field"))?;
             Ok(Expr::Field {
-                obj: Box::new(parse_expr(source, object)?),
+                obj: Box::new(parse_expr(source, object, diag)?),
                 name: node_text(source, field).to_string(),
             })
         }
-        "assignment_expression" | "update_expression" => {
-            Ok(Expr::Raw(node_text(source, node).to_string()))
-        }
-        _ => Ok(Expr::Raw(node_text(source, node).to_string())),
+        "assignment_expression" | "update_expression" => Ok(record_raw_expr(source, node, diag)),
+        _ => Ok(record_raw_expr(source, node, diag)),
     }
 }
 
-fn parse_binary_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
+fn parse_binary_expr(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Expr> {
     let lhs = node
         .child_by_field_name("left")
         .ok_or_else(|| parse_err("binary_expression missing lhs"))?;
@@ -411,16 +448,20 @@ fn parse_binary_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
     let op_text = find_anon_operator(source, node)
         .ok_or_else(|| parse_err("binary_expression missing operator"))?;
     let Some(op) = parse_c_family_bin_op(op_text) else {
-        return Ok(Expr::Raw(node_text(source, node).to_string()));
+        return Ok(record_raw_expr(source, node, diag));
     };
     Ok(Expr::Binary {
         op,
-        lhs: Box::new(parse_expr(source, lhs)?),
-        rhs: Box::new(parse_expr(source, rhs)?),
+        lhs: Box::new(parse_expr(source, lhs, diag)?),
+        rhs: Box::new(parse_expr(source, rhs, diag)?),
     })
 }
 
-fn parse_call_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
+fn parse_call_expr(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Expr> {
     let callee_node = node
         .child_by_field_name("function")
         .ok_or_else(|| parse_err("call_expression missing function"))?;
@@ -429,11 +470,11 @@ fn parse_call_expr(source: &str, node: tree_sitter::Node) -> Result<Expr> {
         .ok_or_else(|| parse_err("call_expression missing arguments"))?;
     let mut args = Vec::new();
     for i in 0..args_node.named_child_count() {
-        args.push(parse_expr(source, args_node.named_child(i).unwrap())?);
+        args.push(parse_expr(source, args_node.named_child(i).unwrap(), diag)?);
     }
 
     Ok(Expr::Call {
-        callee: Box::new(parse_expr(source, callee_node)?),
+        callee: Box::new(parse_expr(source, callee_node, diag)?),
         args,
     })
 }
@@ -521,7 +562,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         assert_eq!(module.source_language, SourceLang::Cpp);
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
@@ -548,7 +589,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -569,7 +610,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -586,7 +627,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -603,7 +644,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -620,7 +661,7 @@ int answer(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -639,7 +680,7 @@ int f(int x) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -673,7 +714,7 @@ int binary_search(vector<int>& nums, int target) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -695,7 +736,7 @@ int first_even(vector<int>& nums) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };
@@ -738,7 +779,7 @@ int total(vector<int>& nums) {
 }
 "#;
 
-        let module = CppParser::new().parse(source).unwrap();
+        let (module, _) = CppParser::new().parse(source).unwrap();
         let Item::Function(function) = &module.items[0] else {
             panic!("expected function");
         };

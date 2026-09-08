@@ -275,7 +275,9 @@ fn help_shows_explanation_flags() {
         .success()
         .stdout(contains("--lang"))
         .stdout(contains("--no-pseudo"))
-        .stdout(contains("--no-explain"));
+        .stdout(contains("--no-explain"))
+        .stdout(contains("--pseudo-only"))
+        .stdout(contains("--explain-only"));
 }
 
 #[test]
@@ -285,6 +287,7 @@ fn detects_chinese_locale_from_lang() {
     cmd.arg(fixture)
         .env_remove("LC_ALL")
         .env_remove("LC_MESSAGES")
+        .env_remove("ALGOSKETCH_LANG")
         .env_remove("PSEUDOCODE_LANG")
         .env("LANG", "zh_CN.UTF-8");
 
@@ -294,14 +297,15 @@ fn detects_chinese_locale_from_lang() {
 }
 
 #[test]
-fn pseudocode_lang_overrides_lang() {
+fn algosketch_lang_overrides_lang() {
     let fixture = format!("{}/fixtures/binary_search.py", env!("CARGO_MANIFEST_DIR"));
     let mut cmd = Command::cargo_bin("algosketch").unwrap();
     cmd.arg(fixture)
         .env_remove("LC_ALL")
         .env_remove("LC_MESSAGES")
+        .env_remove("PSEUDOCODE_LANG")
         .env("LANG", "en_US.UTF-8")
-        .env("PSEUDOCODE_LANG", "zh");
+        .env("ALGOSKETCH_LANG", "zh");
 
     cmd.assert()
         .success()
@@ -406,8 +410,6 @@ fn cpp_stdin_with_source_lang() {
 
 #[test]
 fn raw_fallback_emits_warning_to_stderr() {
-    // Use a Python snippet with a `yield` statement inside a function,
-    // which is known to produce Raw fallback nodes in the parser.
     let fixture = write_temp_python_file(
         "raw-warning",
         r#"
@@ -419,10 +421,48 @@ def f():
     let mut cmd = Command::cargo_bin("algosketch").unwrap();
     cmd.arg(fixture.path()).arg("--lang").arg("en");
 
+    cmd.assert().success().stdout(contains("RETURN 1")).stderr(
+        contains("warning: 1 unparsed nodes in")
+            .and(contains(fixture.path().display().to_string()))
+            .and(contains("(lines 3)")),
+    );
+}
+
+#[test]
+fn raw_warning_truncates_line_list_after_five() {
+    let fixture = write_temp_python_file(
+        "raw-warning-truncate",
+        r#"
+def f():
+    yield 1
+    yield 2
+    yield 3
+    yield 4
+    yield 5
+    yield 6
+"#,
+    );
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path()).arg("--lang").arg("en");
+
+    cmd.assert().success().stderr(
+        contains("warning: 6 unparsed nodes in").and(contains("(lines 3, 4, 5, 6, 7, +1 more)")),
+    );
+}
+
+#[test]
+fn raw_warning_uses_stdin_name_for_stdin_input() {
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg("-")
+        .arg("--source-lang")
+        .arg("python")
+        .arg("--lang")
+        .arg("en")
+        .write_stdin("def f():\n    yield 42\n    return 1\n");
+
     cmd.assert()
         .success()
-        .stdout(contains("RETURN 1"))
-        .stderr(contains("warning:").and(contains("unparsed nodes")));
+        .stderr(contains("unparsed nodes in <stdin>").and(contains("(lines 2)")));
 }
 
 #[test]
@@ -445,4 +485,83 @@ def f():
         .success()
         .stdout(contains("RETURN 1"))
         .stderr(contains("warning:").not());
+}
+
+#[test]
+fn pseudo_only_flag_outputs_pseudocode_without_explanation() {
+    let fixture = write_temp_python_binary_search("pseudo-only");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .arg("--pseudo-only")
+        .arg("--lang")
+        .arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("FUNCTION binary_search"))
+        .stdout(contains("Explanation").not());
+}
+
+#[test]
+fn explain_only_flag_outputs_explanation_without_pseudocode() {
+    let fixture = write_temp_python_binary_search("explain-only");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .arg("--explain-only")
+        .arg("--lang")
+        .arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("Purpose:"))
+        .stdout(contains("FUNCTION").not());
+}
+
+#[test]
+fn pseudo_only_conflicting_with_no_pseudo_exits_1() {
+    let fixture = write_temp_python_binary_search("pseudo-only-conflict");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .arg("--pseudo-only")
+        .arg("--no-pseudo");
+
+    cmd.assert().failure().code(1);
+}
+
+#[test]
+fn explain_only_conflicting_with_no_explain_exits_1() {
+    let fixture = write_temp_python_binary_search("explain-only-conflict");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .arg("--explain-only")
+        .arg("--no-explain");
+
+    cmd.assert().failure().code(1);
+}
+
+#[test]
+fn no_pseudo_with_no_explain_exits_1() {
+    let fixture = write_temp_python_binary_search("both-disabled");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .arg("--no-pseudo")
+        .arg("--no-explain");
+
+    cmd.assert().failure().code(1);
+}
+
+#[test]
+fn pseudocode_lang_no_longer_honored() {
+    let fixture = write_temp_python_binary_search("legacy-env-var");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env_remove("ALGOSKETCH_LANG")
+        .env("LANG", "en_US.UTF-8")
+        .env("PSEUDOCODE_LANG", "zh");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("函数 binary_search").not());
 }
