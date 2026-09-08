@@ -712,7 +712,7 @@ fn go_stdin_with_source_lang() {
 
 Run: `cargo test -p algosketch-cli --test cli` → PASS (30 tests: 27 pre-existing + Task 1's + these two). clippy, fmt.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add crates/algosketch-cli/tests/cli.rs
