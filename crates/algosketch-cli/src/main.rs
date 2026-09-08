@@ -101,7 +101,7 @@ fn resolve_natural_lang(arg: NaturalLangArg) -> NaturalLang {
 }
 
 fn detect_locale() -> NaturalLang {
-    if let Ok(val) = std::env::var("PSEUDOCODE_LANG") {
+    if let Ok(val) = std::env::var("ALGOSKETCH_LANG") {
         if val.starts_with("zh") {
             return NaturalLang::Zh;
         }

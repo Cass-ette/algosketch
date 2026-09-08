@@ -287,6 +287,7 @@ fn detects_chinese_locale_from_lang() {
     cmd.arg(fixture)
         .env_remove("LC_ALL")
         .env_remove("LC_MESSAGES")
+        .env_remove("ALGOSKETCH_LANG")
         .env_remove("PSEUDOCODE_LANG")
         .env("LANG", "zh_CN.UTF-8");
 
@@ -296,14 +297,15 @@ fn detects_chinese_locale_from_lang() {
 }
 
 #[test]
-fn pseudocode_lang_overrides_lang() {
+fn algosketch_lang_overrides_lang() {
     let fixture = format!("{}/fixtures/binary_search.py", env!("CARGO_MANIFEST_DIR"));
     let mut cmd = Command::cargo_bin("algosketch").unwrap();
     cmd.arg(fixture)
         .env_remove("LC_ALL")
         .env_remove("LC_MESSAGES")
+        .env_remove("PSEUDOCODE_LANG")
         .env("LANG", "en_US.UTF-8")
-        .env("PSEUDOCODE_LANG", "zh");
+        .env("ALGOSKETCH_LANG", "zh");
 
     cmd.assert()
         .success()
@@ -546,4 +548,20 @@ fn no_pseudo_with_no_explain_exits_1() {
         .arg("--no-explain");
 
     cmd.assert().failure().code(1);
+}
+
+#[test]
+fn pseudocode_lang_no_longer_honored() {
+    let fixture = write_temp_python_binary_search("legacy-env-var");
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env_remove("ALGOSKETCH_LANG")
+        .env("LANG", "en_US.UTF-8")
+        .env("PSEUDOCODE_LANG", "zh");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("函数 binary_search").not());
 }
