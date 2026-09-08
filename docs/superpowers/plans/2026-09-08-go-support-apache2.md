@@ -183,9 +183,10 @@ Expected: the panic message contains the full S-expression. **Delete this test a
 Grammar facts pre-extracted from tree-sitter-go 0.25's `node-types.json` (from the local registry cache — still confirm in the dump, they are the authority):
 - `function_declaration` / `method_declaration`: fields `name`, `parameters`, `receiver` (method only), `result`, `body`. Parameters are `parameter_declaration` nodes (fields `name`, `type`).
 - `if_statement`: fields `condition`, `consequence` (the then-block — singular), `alternative`. `else if` nests: `alternative` is directly an `if_statement` (no else_if_clause kind); plain `else` gives a `block`.
-- `for_statement`: field `body`, plus either a `for_clause` child (fields `initializer`, `condition`, `update`), a `range_clause` child (fields `left`, `right`), only a `condition` field, or nothing (infinite).
+- `for_statement`: its ONLY field is `body`. The loop shape comes from named CHILDREN: a `for_clause` child (fields `initializer`, `condition`, `update`), a `range_clause` child (fields `left`, `right`), a bare condition CHILD (no field — e.g. a `binary_expression` directly under `for_statement`), or nothing (infinite). Do NOT use `child_by_field_name("condition")` on `for_statement`.
+- `return_statement` has NO fields; `expression_list` is a named child KIND (iterate named children to find it).
 - `i++` / `i--` parse as `inc_statement` / `dec_statement`.
-- Statement kinds: `expression_statement`, `short_var_declaration`, `assignment_statement`, `var_declaration`/`const_declaration` (containing `var_spec`/`const_spec`), `return_statement` (field `expression_list`), `break_statement`, `continue_statement`, `defer_statement`, `go_statement`, `labeled_statement`.
+- Statement kinds: `expression_statement`, `short_var_declaration`, `assignment_statement`, `var_declaration`/`const_declaration` (containing `var_spec`/`const_spec`), `return_statement`, `break_statement`, `continue_statement`, `defer_statement`, `go_statement`, `labeled_statement`.
 - Expression kinds: `binary_expression` (field `operator`), `unary_expression` (field `operator`), `call_expression` (fields `function`, `arguments`), `selector_expression` (fields `operand`, `field`), `index_expression` (fields `operand`, `index`), `parenthesized_expression`, `identifier`, `int_literal`, `float_literal`, `interpreted_string_literal`, `raw_string_literal`.
 
 - [ ] **Step 5: Run tests**
@@ -412,7 +413,9 @@ git commit -m "feat(core): parse Go statements and expressions"
         let Stmt::For { kind: ForKind::CStyle { .. }, .. } = &f.body.0[0] else {
             panic!("expected c-style for");
         };
-        let Stmt::While { .. } = &f.body.0[1] else { panic!("expected while") };
+        let Stmt::While { cond, .. } = &f.body.0[1] else { panic!("expected while") };
+        // pin the condition actually parsed (guards against silently dropping it)
+        assert!(matches!(cond, crate::ir::Expr::Binary { .. }));
         // the i++ update clause records one Raw expression (cpp/java parity)
         assert_eq!(diag.expressions, 1);
         assert_eq!(diag.statements, 0);
@@ -449,11 +452,10 @@ git commit -m "feat(core): parse Go statements and expressions"
 - `if_statement`: `condition` field → `parse_expr`; `consequence` (singular) → `parse_block`; `alternative`:
   - an `if_statement` (tree-sitter-go nests else-if directly) → `else_block = Block(vec![nested If])` (matches python/java nesting — REQUIRED for skeleton parity)
   - a `block` → `parse_block`
-- `for_statement` (field `body` for the block; the clause shape decides the kind):
+- `for_statement` (its only field is `body`; the clause shape decides the kind):
   - `for_clause` child (fields `initializer`, `condition`, `update`): initializer → `parse_stmt` (Box), condition → `parse_expr`, update → `record_raw_expr` (Raw — cpp/java parity, drives fixture budgets) → `ForKind::CStyle`
-  - only a `condition` field (no clause children): `Stmt::While`
+  - no `for_clause`/`range_clause` child → inspect the named children besides the `body` block: exactly one → `Stmt::While { cond: parse_expr(that child) }`; none → `Stmt::While { cond: Literal::Bool(true) }`. (The condition has no field — do not call `child_by_field_name("condition")`.)
   - `range_clause` child (fields `left`, `right`): single name on the left (`for v := range xs` / `for _ := range xs`) → `ForKind::ForEach { var, iter: right }`; two names on the left → `record_raw_stmt` on the whole for statement (test above)
-  - nothing at all: `Stmt::While { cond: Literal::Bool(true) }`
 
 Pinning-test note: `two_var_range_falls_back_to_raw` passes even before this task (unhandled `for` already hits `record_raw_stmt`) — it locks the behavior in.
 
