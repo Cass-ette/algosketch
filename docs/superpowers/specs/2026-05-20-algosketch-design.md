@@ -317,7 +317,7 @@ stdin requires explicit `--source-lang`.
 
 `--lang auto` resolves in order:
 
-1. `PSEUDOCODE_LANG` env var (escape hatch)
+1. `ALGOSKETCH_LANG` env var (escape hatch)
 2. `LC_ALL` → `LC_MESSAGES` → `LANG`
 3. Prefix match: `zh*` → Chinese; otherwise English
 4. Fallback: English
@@ -333,6 +333,8 @@ pub enum PseudoError {
     UnsupportedLanguage(String),
     #[error("cannot infer source language; pass --source-lang")]
     UnknownLanguage,
+    #[error("usage error: {0}")]
+    Usage(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("parse error in {file}: {message}")]
@@ -358,6 +360,8 @@ Unparsed-node behavior:
   `> Unparsed source preserved as-is.` line.
 - stderr (unless `-q`): one summary line, e.g.
   `warning: 3 unparsed nodes in input.cpp (lines 12, 45, 67)`
+  Line lists show at most 5 distinct lines, then `+N more`.
+  Stdin input is reported as `<stdin>` in the file position.
 
 ## 9. Testing strategy
 
@@ -387,6 +391,8 @@ CI: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace`,
 | M4 | Explanation      | Templates_zh/en in; `--explain`, `--lang`, locale auto-detect all work.             |
 | M5 | Polish           | Markdown output, `Raw` fallback warnings, exit codes, full `assert_cmd` suite pass. |
 
+All milestones M1–M5 complete; v0.1.0 tagged 2026-09.
+
 v0.1.0 = M1 through M5. Out-of-scope future tracks:
 
 - v0.2: LLM provider hooked in for `Raw` node fallback.
@@ -396,8 +402,6 @@ v0.1.0 = M1 through M5. Out-of-scope future tracks:
 
 - Tree-sitter grammar pinning policy: vendor as crate dep or as git submodule?
   Decide at M2 when concrete dep choices are made.
-- Whether to surface a `--debug-ir` flag dumping the IR as JSON. Useful for
-  contributors; defer to M5 if cheap.
 - Output color/ANSI handling. Defer until users ask.
 
 ---
