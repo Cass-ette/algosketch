@@ -287,4 +287,17 @@ mod tests {
         assert_eq!(resolve_natural_lang(NaturalLangArg::Zh), NaturalLang::Zh);
         assert_eq!(resolve_natural_lang(NaturalLangArg::En), NaturalLang::En);
     }
+
+    #[test]
+    fn format_raw_warning_shows_all_lines_at_boundary() {
+        let mut diag = RawDiagnostics::default();
+        for line in 3..=7 {
+            diag.record_statement(line);
+        }
+        let warning = format_raw_warning(&diag, "edge.py");
+        assert_eq!(
+            warning,
+            "warning: 5 unparsed nodes in edge.py (lines 3, 4, 5, 6, 7)"
+        );
+    }
 }
