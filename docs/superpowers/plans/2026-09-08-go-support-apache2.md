@@ -159,6 +159,11 @@ impl LanguageParser for GoParser {
 
 **API note (verified against the crate):** tree-sitter-go 0.25 exports `pub const LANGUAGE: LanguageFn` — there is **no** `language()` function. Use `tree_sitter_go::LANGUAGE.into()` exactly as java.rs:33 / cpp.rs:33 do for their grammars. Import the trait as the siblings do (`crate::parser::LanguageParser`).
 
+**Errata (from Task 1 execution, verified empirically):**
+1. tree-sitter-go 0.25 is grammar ABI 15; runtime 0.24.7 supports ABI 14 only — `set_language` hard-fails. The workspace `tree-sitter` runtime was therefore bumped to `"0.25"` (resolves 0.25.10). All existing grammars (python 0.21 / java 0.23.5 / cpp 0.23.4, ABI 14) are re-verified green on 0.25.10 (full workspace suite). Do not "fix" this back to 0.24.
+2. Go `block` nodes wrap their statements in a single `statement_list` child (unlike java/cpp blocks). `parse_block` must descend through the `statement_list` wrapper before iterating statements.
+3. The CST-dump fixture path in the throwaway test is `../../crates/algosketch-cli/fixtures/binary_search.go` (test CWD is `crates/algosketch-core`).
+
 - [ ] **Step 4: CST reality check (MANDATORY before Tasks 2–4)**
 
 Temporarily add this test at the bottom of `go.rs`, run it, and **record the dumped S-expression in your report** (it is the authority for every node kind/field name used later — if the real grammar differs from this plan's assumed names, follow the dump):
