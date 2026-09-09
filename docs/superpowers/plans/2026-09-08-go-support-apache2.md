@@ -280,7 +280,7 @@ In `go.rs`, following the structure of `java.rs` (trait impl calls a `collect` f
   - Anything else → `record_raw_item(source, child, &mut diag)` (spec §2 top-level handling).
 - `parse_function`: name from the `name` field (`node.child_by_field_name("name")`); params from the `parameters` field — a `parameter_list` whose children are `parameter_declaration` nodes, each contributing its `name` field as a `Param { name, type_hint: None }`. For `method_declaration`, the `receiver` field is also a parameter_list — prepend its names first.
 - Body: the `body` field is a `block`. In THIS task, `parse_block` is a stub returning `Block(vec![])` (the tests here don't inspect bodies); Task 3 makes it real.
-- Import `record_raw_item` from `crate::parser::common` (match the siblings' import style). `Span` from `node.start_byte()..node.end_byte()` like the siblings.
+- Import `record_raw_item` from `crate::parser::common` (match the siblings' import style). `Span`: note the siblings actually use `Span::default()`; populating real byte spans (plan's original wording) is fine — nothing consumes the field today. Do not "fix" it backward in either direction.
 
 Pinning-test note: `returns_parse_error_for_invalid_go` already passes against the skeleton's `has_error` check, and `skips_package_and_import_silently` asserts `items.len() == 1` which needs the top-level walk — run the whole file's tests rather than a red-first ceremony for those two.
 
