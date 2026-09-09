@@ -163,6 +163,8 @@ impl LanguageParser for GoParser {
 1. tree-sitter-go 0.25 is grammar ABI 15; runtime 0.24.7 supports ABI 14 only — `set_language` hard-fails. The workspace `tree-sitter` runtime was therefore bumped to `"0.25"` (resolves 0.25.10). All existing grammars (python 0.21 / java 0.23.5 / cpp 0.23.4, ABI 14) are re-verified green on 0.25.10 (full workspace suite). Do not "fix" this back to 0.24.
 2. Go `block` nodes wrap their statements in a single `statement_list` child (unlike java/cpp blocks). `parse_block` must descend through the `statement_list` wrapper before iterating statements.
 3. The CST-dump fixture path in the throwaway test is `../../crates/algosketch-cli/fixtures/binary_search.go` (test CWD is `crates/algosketch-core`).
+4. Top-level `comment` children skip silently in the Go top-level walk (from Task 5; Go files commonly carry header comments).
+5. Range-over-int/channel parses as ForEach per the §2 mapping table (e.g. `for i := range 10` → FOR EACH i IN 10); the spec §2 Raw-fallback list's "range over int/channel" phrase is superseded — Task 9's doc-sync updates the design spec to match.
 
 - [ ] **Step 4: CST reality check (MANDATORY before Tasks 2–4)**
 
