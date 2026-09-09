@@ -1,4 +1,4 @@
-use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
+use algosketch_core::parser::{CppParser, GoParser, JavaParser, LanguageParser, PythonParser};
 
 #[test]
 fn python_reports_raw_statement_line() {
@@ -25,4 +25,13 @@ fn cpp_reports_raw_statement_line() {
     assert_eq!(diag.total(), 1);
     assert_eq!(diag.statements, 1);
     assert_eq!(diag.sorted_unique_lines(), vec![2]);
+}
+
+#[test]
+fn go_reports_raw_statement_and_expression_lines() {
+    let source = "package main\n\nfunc f(x int) {\n\tdefer close(c)\n\tfor i := 0; i < x; i++ {\n\t\tg(i)\n\t}\n}\n";
+    let (_, diag) = GoParser::new().parse(source).unwrap();
+    assert_eq!(diag.statements, 1); // defer
+    assert_eq!(diag.expressions, 1); // i++ update clause
+    assert_eq!(diag.sorted_unique_lines(), vec![4, 5]);
 }

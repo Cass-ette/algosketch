@@ -52,7 +52,10 @@ impl LanguageParser for GoParser {
             let child = root.named_child(i).unwrap();
             match child.kind() {
                 // package/import carry no algorithmic content: silent skip.
-                "package_clause" | "import_declaration" => continue,
+                // Top-level comments are named extras attached to the root
+                // (header/license comments are ubiquitous in real Go): also
+                // silent, not "unparsed nodes".
+                "package_clause" | "import_declaration" | "comment" => continue,
                 "function_declaration" | "method_declaration" => {
                     items.push(parse_function(source, child, &mut diag)?);
                 }
@@ -904,6 +907,19 @@ mod tests {
             f.body.0[0],
             Stmt::Return(Some(Expr::Literal(Literal::Int(1))))
         );
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn top_level_comments_skip_silently() {
+        // A `// comment` at file scope (header/license comments are ubiquitous
+        // in real Go) attaches as a named extra child of the root: it must
+        // skip silently like package/import, not surface as an unparsed Raw
+        // item (carried from the Task 5 review).
+        let source =
+            "// Algotorial sketch.\npackage main\n\nfunc f() {\n\tg()\n}\n// trailing note\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(module.items.len(), 1);
         assert_eq!(diag.total(), 0);
     }
 
