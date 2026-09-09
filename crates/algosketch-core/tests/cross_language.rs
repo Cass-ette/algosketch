@@ -1,6 +1,6 @@
 use algosketch_core::diagnostics::RawDiagnostics;
 use algosketch_core::ir::*;
-use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
+use algosketch_core::parser::{CppParser, GoParser, JavaParser, LanguageParser, PythonParser};
 
 fn parse_fixture(algorithm: &str, ext: &str) -> (Module, RawDiagnostics) {
     let source = std::fs::read_to_string(format!("tests/fixtures/{algorithm}.{ext}"))
@@ -10,6 +10,7 @@ fn parse_fixture(algorithm: &str, ext: &str) -> (Module, RawDiagnostics) {
         "py" => PythonParser::new().parse(&source),
         "java" => JavaParser::new().parse(&source),
         "cpp" => CppParser::new().parse(&source),
+        "go" => GoParser::new().parse(&source),
         _ => panic!("unsupported fixture extension: {ext}"),
     }
     .unwrap_or_else(|err| panic!("failed to parse {algorithm}.{ext}: {err}"))
@@ -35,10 +36,10 @@ fn function_skeleton(function: &Function) -> Vec<String> {
 
 fn expected_raw_total(algorithm: &str, ext: &str) -> usize {
     match (algorithm, ext) {
-        ("quick_sort", "java" | "cpp") => 1,
+        ("quick_sort", "java" | "cpp" | "go") => 1,
         ("reverse_linked_list", "cpp") => 2,
-        ("reverse_string", "java" | "cpp") => 1,
-        ("two_sum", "java" | "cpp") => 2,
+        ("reverse_string", "java" | "cpp" | "go") => 1,
+        ("two_sum", "java" | "cpp" | "go") => 2,
         _ => 0,
     }
 }
@@ -96,6 +97,7 @@ fn cross_language_skeletons_match_for_mvp_fixtures() {
         let (py_module, py_diag) = parse_fixture(algorithm, "py");
         let (java_module, java_diag) = parse_fixture(algorithm, "java");
         let (cpp_module, cpp_diag) = parse_fixture(algorithm, "cpp");
+        let (go_module, go_diag) = parse_fixture(algorithm, "go");
 
         assert_eq!(
             py_diag.total(),
@@ -112,12 +114,19 @@ fn cross_language_skeletons_match_for_mvp_fixtures() {
             expected_raw_total(algorithm, "cpp"),
             "C++ fixture raw fallback budget changed for {algorithm}"
         );
+        assert_eq!(
+            go_diag.total(),
+            expected_raw_total(algorithm, "go"),
+            "Go fixture raw fallback budget changed for {algorithm}"
+        );
 
         let py = module_skeleton(&py_module);
         let java = module_skeleton(&java_module);
         let cpp = module_skeleton(&cpp_module);
+        let go = module_skeleton(&go_module);
 
         assert_eq!(py, java, "Python and Java skeletons differ for {algorithm}");
         assert_eq!(py, cpp, "Python and C++ skeletons differ for {algorithm}");
+        assert_eq!(py, go, "Python and Go skeletons differ for {algorithm}");
     }
 }
