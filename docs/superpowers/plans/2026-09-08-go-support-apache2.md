@@ -389,6 +389,8 @@ git commit -m "feat(core): parse Go statements and expressions"
 
 ### Task 4: Control flow (if chains, all four for-shapes)
 
+**Carried item (from Task 3 review):** `return_statement` handling uses positional `named_child(0).filter(kind == "expression_list")` — `return /* c */ 1` attaches the comment as first named child and silently degrades to `Return(None)`. Switch to `named_child_by_kind(node, "expression_list")` and audit any other positional child access in go.rs in the same pass; add a pinning test for the comment case.
+
 **Files:**
 - Modify: `crates/algosketch-core/src/parser/go.rs`
 - Test: same file
