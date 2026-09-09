@@ -2,8 +2,8 @@ use crate::diagnostics::RawDiagnostics;
 use crate::error::{PseudoError, Result};
 use crate::ir::*;
 use crate::parser::common::{
-    named_children_of_kind, node_text, parse_c_family_bin_op, parse_err, parse_un_op,
-    record_raw_expr, record_raw_item, record_raw_stmt,
+    named_child_by_kind, named_children_of_kind, node_text, parse_c_family_bin_op, parse_err,
+    parse_un_op, record_raw_expr, record_raw_item, record_raw_stmt,
 };
 use crate::parser::LanguageParser;
 use crate::SourceLang;
@@ -132,13 +132,21 @@ fn parse_param_list(source: &str, node: tree_sitter::Node) -> Vec<Param> {
 
 /// Go `block` nodes wrap their statements in a single `statement_list` child
 /// (unlike java/cpp blocks) — descend through it before iterating statements.
+/// A leading comment is a named extra attached to the `block` itself, ahead of
+/// the list, so the lookup must be by kind, not by position. A bare
+/// `func f() {}` block holds no list: an empty body stays empty.
 fn parse_block(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Block> {
-    let Some(list) = node.named_child(0).filter(|c| c.kind() == "statement_list") else {
+    let Some(list) = named_child_by_kind(node, "statement_list") else {
         return Ok(Block(vec![]));
     };
     let mut stmts = Vec::new();
     for i in 0..list.named_child_count() {
         let child = list.named_child(i).unwrap();
+        // Mid-body comments are named extras inside the list: skipped, not
+        // recorded as Raw (they carry no algorithmic content).
+        if child.kind() == "comment" {
+            continue;
+        }
         if matches!(child.kind(), "var_declaration" | "const_declaration") {
             // One declaration can carry several specs / several names, each
             // yielding its own statement.
@@ -232,7 +240,8 @@ fn parse_assignment(
 }
 
 /// `var x int = 3` / `var y, z int` / `const k = 10` — one declaration per
-/// inner spec; grouped declarations (`var ( ... )`) yield several statements.
+/// inner spec; grouped declarations (`var ( ... )`) nest their specs under a
+/// `var_spec_list` wrapper child and yield several statements.
 fn parse_var_declaration(
     source: &str,
     node: tree_sitter::Node,
@@ -243,8 +252,14 @@ fn parse_var_declaration(
     } else {
         "const_spec"
     };
+    let mut specs = named_children_of_kind(node, spec_kind);
+    if specs.is_empty() {
+        if let Some(list) = named_child_by_kind(node, "var_spec_list") {
+            specs = named_children_of_kind(list, spec_kind);
+        }
+    }
     let mut stmts = Vec::new();
-    for spec in named_children_of_kind(node, spec_kind) {
+    for spec in specs {
         let names: Vec<String> = (0..spec.child_count())
             .filter_map(|i| {
                 (spec.field_name_for_child(i as u32) == Some("name"))
@@ -538,11 +553,20 @@ mod tests {
         let Item::Function(f) = &module.items[0] else {
             panic!()
         };
-        use crate::ir::Stmt;
+        use crate::ir::{Expr, Stmt};
         assert!(matches!(f.body.0[0], Stmt::VarDecl(_))); // var x int = 3
         assert!(matches!(f.body.0[1], Stmt::VarDecl(_))); // y := 4 (single-name :=)
         assert!(matches!(f.body.0[2], Stmt::Assign { .. })); // x = y
-        assert!(matches!(f.body.0[3], Stmt::Assign { .. })); // a, b := 1, 2 (multi)
+                                                             // a, b := 1, 2: both sides carry two entries — tuple semantics pinned.
+        let Stmt::Assign {
+            target: Expr::Tuple(targets),
+            value: Expr::Tuple(values),
+        } = &f.body.0[3]
+        else {
+            panic!("expected tuple assignment for a, b := 1, 2");
+        };
+        assert_eq!(targets.len(), 2);
+        assert_eq!(values.len(), 2);
         assert_eq!(diag.total(), 0);
     }
 
@@ -559,9 +583,9 @@ mod tests {
 
     #[test]
     fn parses_go_return_break_continue() {
-        let source = "package main\n\nfunc f() {\n\treturn 1\n}\n\nfunc g() {\n\treturn\n}\n";
+        let source = "package main\n\nfunc f() {\n\treturn 1\n}\n\nfunc g() {\n\treturn\n}\n\nfunc h() {\n\treturn 1, 2\n}\n";
         let (module, _) = GoParser::new().parse(source).unwrap();
-        use crate::ir::Stmt;
+        use crate::ir::{Expr, Stmt};
         let Item::Function(f) = &module.items[0] else {
             panic!()
         };
@@ -570,6 +594,14 @@ mod tests {
             panic!()
         };
         assert!(matches!(&g.body.0[0], Stmt::Return(None)));
+        let Item::Function(h) = &module.items[2] else {
+            panic!()
+        };
+        // `return 1, 2`: multi-value return wraps as a tuple.
+        let Stmt::Return(Some(Expr::Tuple(values))) = &h.body.0[0] else {
+            panic!("expected tuple return");
+        };
+        assert_eq!(values.len(), 2);
     }
 
     #[test]
@@ -582,6 +614,54 @@ mod tests {
         };
         assert_eq!(f.body.0.len(), 3);
         assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn parses_go_grouped_var_declaration() {
+        // Grouped declarations nest their specs under a `var_spec_list`
+        // wrapper: each spec still expands to its own VarDecl statement.
+        let source = "package main\n\nfunc f() {\n\tvar (\n\t\ta int = 1\n\t\tb int = 2\n\t)\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.total(), 0);
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        use crate::ir::Stmt;
+        assert_eq!(f.body.0.len(), 2);
+        assert!(matches!(&f.body.0[0], Stmt::VarDecl(d) if d.name == "a"));
+        assert!(matches!(&f.body.0[1], Stmt::VarDecl(d) if d.name == "b"));
+    }
+
+    #[test]
+    fn parses_go_compound_assignment_as_raw() {
+        // `+=` & friends keep the operator visible: one loud Raw with a
+        // diagnostic, never a plain Assign that silently drops the update
+        // (mirror of java.rs's compound-assignment parity test).
+        let source = "package main\n\nfunc f() {\n\tx := 1\n\tx += 2\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        use crate::ir::Stmt;
+        assert_eq!(f.body.0[1], Stmt::Raw("x += 2".to_string()));
+        assert_eq!(diag.total(), 1);
+    }
+
+    #[test]
+    fn parses_go_body_with_leading_comment() {
+        // Comments are named extras: a leading one attaches as a direct child
+        // of `block` (ahead of `statement_list`), mid-body ones sit inside the
+        // list — neither may disturb or replace the statements around them.
+        let source = "package main\n\nfunc f() {\n\t// leading\n\tx := 1\n\t// mid\n\ty := x\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.total(), 0);
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(f.body.0.len(), 2);
+        use crate::ir::Stmt;
+        assert!(matches!(f.body.0[0], Stmt::VarDecl(_))); // x := 1
+        assert!(matches!(f.body.0[1], Stmt::VarDecl(_))); // y := x
     }
 
     #[test]
