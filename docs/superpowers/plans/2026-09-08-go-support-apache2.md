@@ -301,6 +301,8 @@ git commit -m "feat(core): parse Go function declarations and receivers"
 - Modify: `crates/algosketch-core/src/parser/go.rs`
 - Test: same file
 
+**Carried item (from Task 2 review):** bodyless `func f()` / `func f()` declarations (legal Go, no `body` field) currently hard-error via `parse_err("function missing body")`. Change to a `record_raw_item` fallback (loud warning, non-fatal — spec §2 Raw-fallback philosophy; mirrors java.rs's bodyless-method guard). Add a test pinning it.
+
 - [ ] **Step 1: Write the failing tests** (append to `mod tests`)
 
 ```rust
