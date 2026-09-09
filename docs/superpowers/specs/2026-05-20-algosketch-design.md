@@ -18,8 +18,8 @@ human-readable explanation, primarily targeted at:
 - sharing algorithms across language communities without forcing readers to
   know the source language
 
-The MVP scope is intentionally narrow: a CLI, single-file input, three source
-languages (Python, Java, C++), rule-based parsing only.
+The MVP scope is intentionally narrow: a CLI, single-file input, four source
+languages (Python, Java, C++, Go), rule-based parsing only.
 
 ## 2. Non-goals (v0.1)
 
@@ -45,7 +45,7 @@ languages (Python, Java, C++), rule-based parsing only.
 │  │  (TS)    │    │ (枢纽)   │    │ pseudo / explain(zh|en)│  │
 │  └──────────┘    └──────────┘    └────────────────────────┘  │
 │       ▲                                                      │
-│       │ Python / Java / C++ adapters                         │
+│       │ Python / Java / C++ / Go adapters                    │
 │  ┌──────────┐                                                │
 │  │ provider │  ← reserved trait, no implementation in v0.1   │
 │  └──────────┘                                                │
@@ -74,7 +74,8 @@ algosketch/
 │   │   │   │   ├── mod.rs
 │   │   │   │   ├── python.rs
 │   │   │   │   ├── java.rs
-│   │   │   │   └── cpp.rs
+│   │   │   │   ├── cpp.rs
+│   │   │   │   └── go.rs
 │   │   │   ├── ir/
 │   │   │   │   └── mod.rs
 │   │   │   ├── renderer/
@@ -292,7 +293,7 @@ ARGS:
     <INPUT>                       Path to source file, or "-" for stdin
 
 OPTIONS:
-    -l, --source-lang <LANG>      python | java | cpp (auto from extension)
+    -l, --source-lang <LANG>      python | java | cpp | go (auto from extension)
         --pseudo / --no-pseudo    Toggle pseudocode output       [default: on]
         --explain / --no-explain  Toggle explanation output      [default: on]
         --lang <NAT>              zh | en | auto                 [default: auto]
@@ -312,6 +313,7 @@ Extension → language map (no content sniffing):
 | `.py`                                  | Python   |
 | `.java`                                | Java     |
 | `.cpp` `.cc` `.cxx` `.hpp` `.h`        | C++      |
+| `.go`                                  | Go       |
 
 stdin requires explicit `--source-lang`.
 
@@ -370,9 +372,9 @@ Layered:
 - **Parser unit tests** per language: source → IR (snapshot via `insta`).
 - **Renderer unit tests**: IR → pseudocode, IR → zh, IR → en (snapshots).
 - **Cross-language skeleton test**: for each fixture, the same algorithm in
-  three languages must produce equivalent control-flow IR skeletons. This is
+  four languages must produce equivalent control-flow IR skeletons. This is
   the canary that proves the IR abstraction works.
-- **End-to-end fixtures**: 15 samples (5 algorithms × 3 languages):
+- **End-to-end fixtures**: 20 samples (5 algorithms × 4 languages):
   `binary_search`, `reverse_string`, `reverse_linked_list`, `quick_sort`,
   `two_sum`.
 - **CLI tests** via `assert_cmd`: exit codes, stdout/stderr, `--output`,
@@ -390,13 +392,14 @@ CI: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace`,
 | M3 | Java + C++       | Both parsers in; cross-language skeleton test passes for all 5 fixtures.            |
 | M4 | Explanation      | Templates_zh/en in; `--explain`, `--lang`, locale auto-detect all work.             |
 | M5 | Polish           | Markdown output, `Raw` fallback warnings, exit codes, full `assert_cmd` suite pass. |
+| M6 | Go + Apache-2.0  | Go parser + fixtures in; 4-language skeleton test green; relicensed.                |
 
-All milestones M1–M5 complete; v0.1.0 tagged 2026-09.
+All milestones M1–M6 complete; v0.2.0 tagged 2026-09.
 
 v0.1.0 = M1 through M5. Out-of-scope future tracks:
 
-- v0.2: LLM provider hooked in for `Raw` node fallback.
-- v0.3: WASM build + minimal web UI.
+- v0.3: LLM provider hooked in for `Raw` node fallback.
+- v0.4: WASM build + minimal web UI.
 
 ## 11. Open questions (intentionally deferred)
 
