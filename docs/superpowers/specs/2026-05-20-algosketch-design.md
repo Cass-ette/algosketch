@@ -3,7 +3,7 @@
 - Date: 2026-05-20
 - Status: Approved (initial draft, pending implementation)
 - Repo: https://github.com/Cass-ette/algosketch
-- License: MIT OR Apache-2.0
+- License: Apache-2.0
 - Author: Cass-ette
 
 ---

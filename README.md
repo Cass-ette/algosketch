@@ -108,12 +108,7 @@ The pseudocode style is informed by these references:
 
 ### License
 
-Dual-licensed under either of:
-
-- MIT — see [`LICENSE-MIT`](LICENSE-MIT)
-- Apache-2.0 — see [`LICENSE-APACHE`](LICENSE-APACHE)
-
-at your option.
+Apache-2.0 — see [`LICENSE-APACHE`](LICENSE-APACHE).
 
 ---
 
@@ -202,7 +197,4 @@ cat snippet.py | algosketch - --source-lang python
 
 ### 许可协议
 
-双授权，任选其一：
-
-- MIT — 见 [`LICENSE-MIT`](LICENSE-MIT)
-- Apache-2.0 — 见 [`LICENSE-APACHE`](LICENSE-APACHE)
+Apache-2.0 — 见 [`LICENSE-APACHE`](LICENSE-APACHE)。
