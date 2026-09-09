@@ -164,7 +164,7 @@ impl LanguageParser for GoParser {
 2. Go `block` nodes wrap their statements in a single `statement_list` child (unlike java/cpp blocks). `parse_block` must descend through the `statement_list` wrapper before iterating statements.
 3. The CST-dump fixture path in the throwaway test is `../../crates/algosketch-cli/fixtures/binary_search.go` (test CWD is `crates/algosketch-core`).
 4. Top-level `comment` children skip silently in the Go top-level walk (from Task 5; Go files commonly carry header comments).
-5. Range-over-int/channel parses as ForEach per the §2 mapping table (e.g. `for i := range 10` → FOR EACH i IN 10); the spec §2 Raw-fallback list's "range over int/channel" phrase is superseded — Task 9's doc-sync updates the design spec to match.
+5. Range-over-int/channel parses as ForEach per the §2 mapping table (e.g. `for i := range 10` → FOR EACH i IN 10). Note: this erratum originally claimed the design spec's §2 Raw-fallback list had a superseded "range over int/channel" phrase — that phrase never existed in the spec (verified at Task 9 review); no spec edit was needed.
 
 - [ ] **Step 4: CST reality check (MANDATORY before Tasks 2–4)**
 
