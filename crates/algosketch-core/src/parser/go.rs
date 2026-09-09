@@ -170,11 +170,10 @@ fn parse_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
         "assignment_statement" => parse_assignment(source, node, diag),
         "return_statement" => {
             // `return` has no fields; the (optional) `expression_list` is a
-            // named child.
-            let values = match node
-                .named_child(0)
-                .filter(|c| c.kind() == "expression_list")
-            {
+            // named child — looked up by KIND, not position: a leading comment
+            // (`return /* c */ 1`) attaches as the first named child and a
+            // positional read would silently degrade to Return(None).
+            let values = match named_child_by_kind(node, "expression_list") {
                 Some(list) => parse_expression_list(source, list, diag)?,
                 None => Vec::new(),
             };
@@ -186,7 +185,120 @@ fn parse_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
         }
         "break_statement" => Ok(Stmt::Break),
         "continue_statement" => Ok(Stmt::Continue),
-        // if/for land in Task 4; everything else stays a loud Raw.
+        "if_statement" => parse_if_stmt(source, node, diag),
+        "for_statement" => parse_for_stmt(source, node, diag),
+        _ => Ok(record_raw_stmt(source, node, diag)),
+    }
+}
+
+/// `if cond {} else if ... {} else {}`: tree-sitter-go nests `else if` as the
+/// `alternative` being directly an `if_statement` (no else_if_clause kind) —
+/// re-nested as `Block(vec![If])` so the IR shape matches python/java and the
+/// cross-language skeleton rendering stays uniform.
+fn parse_if_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Stmt> {
+    let cond = node
+        .child_by_field_name("condition")
+        .ok_or_else(|| parse_err("if missing condition"))?;
+    let consequence = node
+        .child_by_field_name("consequence")
+        .ok_or_else(|| parse_err("if missing consequence"))?;
+    let else_block = node
+        .child_by_field_name("alternative")
+        .map(|alternative| {
+            if alternative.kind() == "if_statement" {
+                parse_if_stmt(source, alternative, diag).map(|stmt| Block(vec![stmt]))
+            } else {
+                parse_block(source, alternative, diag)
+            }
+        })
+        .transpose()?;
+
+    Ok(Stmt::If {
+        cond: parse_expr(source, cond, diag)?,
+        then_block: parse_block(source, consequence, diag)?,
+        else_block,
+    })
+}
+
+/// `for`'s ONLY field is `body`; the loop shape comes from named children:
+/// a `for_clause` child (C-style), a `range_clause` child (foreach), exactly
+/// one other child (`while` with that child as the condition — it carries no
+/// field, so it must be found positionally among the named children), or
+/// nothing (infinite loop → `While(true)`).
+fn parse_for_stmt(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Stmt> {
+    let body = node
+        .child_by_field_name("body")
+        .ok_or_else(|| parse_err("for missing body"))?;
+
+    if let Some(clause) = named_child_by_kind(node, "for_clause") {
+        // C-style: `for i := 0; i < n; i++`. A partial clause (any of the
+        // three fields omitted, e.g. `for i := 0; ; i++`) stays a loud Raw
+        // rather than guessing a missing part (cpp parity).
+        let (Some(init), Some(cond), Some(update)) = (
+            clause.child_by_field_name("initializer"),
+            clause.child_by_field_name("condition"),
+            clause.child_by_field_name("update"),
+        ) else {
+            return Ok(record_raw_stmt(source, node, diag));
+        };
+        return Ok(Stmt::For {
+            kind: ForKind::CStyle {
+                init: Box::new(parse_stmt(source, init, diag)?),
+                cond: parse_expr(source, cond, diag)?,
+                // `i++`/`i--` are inc/dec statements with no structured
+                // mapping: recorded Raw regardless of the inner kind
+                // (cpp/java parity, drives fixture budgets).
+                step: record_raw_expr(source, update, diag),
+            },
+            body: parse_block(source, body, diag)?,
+        });
+    }
+
+    if let Some(clause) = named_child_by_kind(node, "range_clause") {
+        // `for v := range xs`: the left side is an expression_list holding
+        // the (single) loop variable. Two variables (`for i, v := range xs`)
+        // have no structured shape — the whole statement stays a loud Raw.
+        let (Some(left), Some(right)) = (
+            clause.child_by_field_name("left"),
+            clause.child_by_field_name("right"),
+        ) else {
+            return Ok(record_raw_stmt(source, node, diag));
+        };
+        let names = identifier_names(source, left);
+        return match names.as_deref() {
+            Some([var]) => Ok(Stmt::For {
+                kind: ForKind::ForEach {
+                    var: var.to_string(),
+                    iter: parse_expr(source, right, diag)?,
+                },
+                body: parse_block(source, body, diag)?,
+            }),
+            _ => Ok(record_raw_stmt(source, node, diag)),
+        };
+    }
+
+    // No clause child: collect the named children besides the body block.
+    // Comments are named extras attached to the for_statement itself
+    // (`for /* c */ n > 0 {}`) and carry no algorithmic content: skipped.
+    let rest: Vec<tree_sitter::Node> = (0..node.named_child_count())
+        .map(|i| node.named_child(i).unwrap())
+        .filter(|c| c.kind() != "comment" && c.id() != body.id())
+        .collect();
+    match rest.as_slice() {
+        [cond] => Ok(Stmt::While {
+            cond: parse_expr(source, *cond, diag)?,
+            body: parse_block(source, body, diag)?,
+        }),
+        [] => Ok(Stmt::While {
+            cond: Expr::Literal(Literal::Bool(true)),
+            body: parse_block(source, body, diag)?,
+        }),
+        // Not a shape valid Go produces (gated by the upstream has_error
+        // check): keep the statement loud, not misparsed.
         _ => Ok(record_raw_stmt(source, node, diag)),
     }
 }
@@ -339,7 +451,13 @@ fn parse_expression_list(
 ) -> Result<Vec<Expr>> {
     let mut exprs = Vec::new();
     for i in 0..node.named_child_count() {
-        exprs.push(parse_expr(source, node.named_child(i).unwrap(), diag)?);
+        let child = node.named_child(i).unwrap();
+        // Comments attach inside the list between items (`a, /* c */ b`):
+        // skipped, or tuple alignment silently shifts.
+        if child.kind() == "comment" {
+            continue;
+        }
+        exprs.push(parse_expr(source, child, diag)?);
     }
     Ok(exprs)
 }
@@ -394,8 +512,11 @@ fn parse_expr(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
             )))
         }
         "parenthesized_expression" => {
-            let inner = node
-                .named_child(0)
+            // A comment right after the opening paren attaches as the first
+            // named child (`(/* c */ x)`): take the first non-comment child.
+            let inner = (0..node.named_child_count())
+                .map(|i| node.named_child(i).unwrap())
+                .find(|c| c.kind() != "comment")
                 .ok_or_else(|| parse_err("parenthesized_expression empty"))?;
             parse_expr(source, inner, diag)
         }
@@ -426,7 +547,13 @@ fn parse_expr(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
                 .ok_or_else(|| parse_err("call_expression missing arguments"))?;
             let mut args = Vec::new();
             for i in 0..arguments.named_child_count() {
-                args.push(parse_expr(source, arguments.named_child(i).unwrap(), diag)?);
+                let child = arguments.named_child(i).unwrap();
+                // Comments attach inside the argument list (`g(/* c */ x)`):
+                // skipped, or the call gains a phantom Raw argument.
+                if child.kind() == "comment" {
+                    continue;
+                }
+                args.push(parse_expr(source, child, diag)?);
             }
             Ok(Expr::Call {
                 callee: Box::new(parse_expr(source, function, diag)?),
@@ -681,5 +808,127 @@ mod tests {
         };
         assert_eq!(g.name, "g");
         assert_eq!(diag.items, 1);
+    }
+
+    #[test]
+    fn parses_go_if_else_chain() {
+        let source = "package main\n\nfunc f(x int) int {\n\tif x == 1 {\n\t\treturn 1\n\t} else if x == 2 {\n\t\treturn 2\n\t} else {\n\t\treturn 3\n\t}\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        use crate::ir::Stmt;
+        let Stmt::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected if with else");
+        };
+        assert_eq!(then_block.0.len(), 1);
+        // else-if must nest an If inside the else block (matches python/java shape)
+        assert!(matches!(else_block.0[0], Stmt::If { .. }));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn parses_go_cstyle_and_cond_fors() {
+        let source = "package main\n\nfunc f(n int) {\n\tfor i := 0; i < n; i++ {\n\t\tg(i)\n\t}\n\tfor n > 0 {\n\t\tn = n - 1\n\t}\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        use crate::ir::{ForKind, Stmt};
+        let Stmt::For {
+            kind: ForKind::CStyle { .. },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected c-style for");
+        };
+        let Stmt::While { cond, .. } = &f.body.0[1] else {
+            panic!("expected while")
+        };
+        // pin the condition actually parsed (guards against silently dropping it)
+        assert!(matches!(cond, crate::ir::Expr::Binary { .. }));
+        // the i++ update clause records one Raw expression (cpp/java parity)
+        assert_eq!(diag.expressions, 1);
+        assert_eq!(diag.statements, 0);
+    }
+
+    #[test]
+    fn parses_go_range_and_infinite_for() {
+        let source = "package main\n\nfunc f(xs []int) {\n\tfor v := range xs {\n\t\tg(v)\n\t}\n\tfor {\n\t\tbreak\n\t}\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        use crate::ir::{ForKind, Literal, Stmt};
+        let Stmt::For {
+            kind: ForKind::ForEach { var, .. },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "v");
+        let Stmt::While { cond, .. } = &f.body.0[1] else {
+            panic!("expected while")
+        };
+        assert_eq!(cond, &crate::ir::Expr::Literal(Literal::Bool(true)));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn two_var_range_falls_back_to_raw() {
+        let source = "package main\n\nfunc f(xs []int) {\n\tfor i, v := range xs {\n\t\tg(i)\n\t\tg(v)\n\t}\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
+        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+    }
+
+    #[test]
+    fn parses_go_return_with_leading_comment() {
+        // `return /* c */ 1`: the comment lands as the FIRST named child of
+        // return_statement — the value list must be found by kind, not by
+        // position, or the return silently degrades to Return(None)
+        // (carried from the Task 3 review).
+        let source = "package main\n\nfunc f() int {\n\treturn /* c */ 1\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        use crate::ir::{Expr, Literal, Stmt};
+        assert_eq!(
+            f.body.0[0],
+            Stmt::Return(Some(Expr::Literal(Literal::Int(1))))
+        );
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn comments_inside_expressions_do_not_disturb_parsing() {
+        // Comments are named extras that attach INSIDE expression containers
+        // (parenthesized_expression, argument_list, expression_list between
+        // items): skipping them keeps value alignment intact (Task 4
+        // positional-access audit — empirically dumped CST shapes).
+        let source =
+            "package main\n\nfunc f(n int) {\n\tx := (/* c */ n)\n\tg(/* d */ n)\n\treturn /* a */ n, /* b */ n\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        use crate::ir::{Expr, Stmt};
+        assert!(matches!(&f.body.0[0], Stmt::VarDecl(d) if matches!(d.init, Some(Expr::Ident(_)))));
+        let Stmt::ExprStmt(Expr::Call { args, .. }) = &f.body.0[1] else {
+            panic!("expected call");
+        };
+        assert_eq!(args.len(), 1);
+        let Stmt::Return(Some(Expr::Tuple(values))) = &f.body.0[2] else {
+            panic!("expected tuple return");
+        };
+        assert_eq!(values.len(), 2);
+        assert_eq!(diag.total(), 0);
     }
 }
