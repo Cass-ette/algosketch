@@ -106,12 +106,19 @@ fn parse_param_list(source: &str, node: tree_sitter::Node) -> Vec<Param> {
     for i in 0..node.named_child_count() {
         let child = node.named_child(i).unwrap();
         if child.kind() == "parameter_declaration" {
-            if let Some(name) = child.child_by_field_name("name") {
-                params.push(Param {
-                    name: node_text(source, name).to_string(),
-                    type_hint: None,
-                });
+            // `name` is a multiple field: `func f(low, high int)` is ONE
+            // parameter_declaration with two name children, so take every
+            // child carrying the field rather than just the first.
+            for j in 0..child.child_count() {
+                if child.field_name_for_child(j as u32) == Some("name") {
+                    let name = child.child(j).unwrap();
+                    params.push(Param {
+                        name: node_text(source, name).to_string(),
+                        type_hint: None,
+                    });
+                }
             }
+            // Unnamed parameters (`func f(int)` has no name field): skipped.
         }
     }
     params
@@ -149,14 +156,28 @@ mod tests {
 
     #[test]
     fn parses_go_method_receiver_as_param() {
-        let source = "package main\n\nfunc (n *Node) value() int {\n\treturn n.v\n}\n";
+        let source = "package main\n\nfunc (n *Node) set(v int) {\n\tn.v = v\n}\n";
         let (module, _) = GoParser::new().parse(source).unwrap();
         let Item::Function(f) = &module.items[0] else {
             panic!("expected function");
         };
-        assert_eq!(f.name, "value");
-        assert_eq!(f.params.len(), 1);
-        assert_eq!(f.params[0].name, "n");
+        assert_eq!(f.name, "set");
+        // Receiver first, then regular params — the full sequence is pinned.
+        let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["n", "v"]);
+    }
+
+    #[test]
+    fn parses_go_grouped_parameter_names() {
+        let source = "package main\n\nfunc f(low, high int) int {\n\treturn low + high\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.total(), 0);
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(f.params.len(), 2);
+        let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["low", "high"]);
     }
 
     #[test]
