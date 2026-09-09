@@ -199,6 +199,12 @@ fn parse_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
 /// re-nested as `Block(vec![If])` so the IR shape matches python/java and the
 /// cross-language skeleton rendering stays uniform.
 fn parse_if_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Stmt> {
+    // `if x := g(); x > 0 {`: the `initializer` field has no structured IR
+    // shape — the whole statement stays one loud Raw (two-var-range
+    // precedent) rather than parsing the if and silently dropping the init.
+    if node.child_by_field_name("initializer").is_some() {
+        return Ok(record_raw_stmt(source, node, diag));
+    }
     let cond = node
         .child_by_field_name("condition")
         .ok_or_else(|| parse_err("if missing condition"))?;
@@ -369,6 +375,9 @@ fn parse_var_declaration(
     };
     let mut specs = named_children_of_kind(node, spec_kind);
     if specs.is_empty() {
+        // The `var_spec_list` descent only fires for grouped `var (...)` —
+        // grouped consts nest their const_specs directly under the
+        // const_declaration, so no const path reaches here.
         if let Some(list) = named_child_by_kind(node, "var_spec_list") {
             specs = named_children_of_kind(list, spec_kind);
         }
@@ -946,5 +955,40 @@ mod tests {
         };
         assert_eq!(values.len(), 2);
         assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn if_with_initializer_falls_back_to_raw() {
+        // `if x := g(); x > 0 {`: tree-sitter-go exposes the init statement
+        // as an `initializer` field the IR cannot express — the whole if must
+        // fall back to one loud Raw (two-var-range precedent), never silently
+        // drop `x := g()` (carried from the final review).
+        let source = "package main\n\nfunc f() int {\n\tif x := g(); x > 0 {\n\t\treturn x\n\t}\n\treturn 0\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        use crate::ir::Stmt;
+        let Stmt::Raw(text) = &f.body.0[0] else {
+            panic!("expected raw fallback for if-with-initializer");
+        };
+        assert!(text.contains("if x := g()"));
+        assert_eq!(diag.statements, 1);
+        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+    }
+
+    #[test]
+    fn switch_statement_falls_back_to_raw() {
+        // `switch` has no structured IR shape: one loud Raw with a diagnostic
+        // (acceptance-checklist pin; defer is covered the same way elsewhere).
+        let source = "package main\n\nfunc f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\treturn 1\n\t}\n\treturn 0\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!("expected function");
+        };
+        use crate::ir::Stmt;
+        assert!(matches!(&f.body.0[0], Stmt::Raw(text) if text.contains("switch x")));
+        assert_eq!(diag.statements, 1);
+        assert_eq!(diag.sorted_unique_lines(), vec![4]);
     }
 }
