@@ -574,3 +574,35 @@ fn pseudocode_lang_no_longer_honored() {
         .success()
         .stdout(predicate::str::contains("函数 binary_search").not());
 }
+
+#[test]
+fn go_file_outputs_pseudocode_and_explanation() {
+    let fixture = format!("{}/fixtures/binary_search.go", env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture).arg("--lang").arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("FUNCTION binary_search"))
+        .stdout(contains("WHILE"))
+        .stdout(contains("RETURN"))
+        .stdout(contains("Purpose:"))
+        .stdout(contains("Steps:"));
+}
+
+#[test]
+fn go_stdin_with_source_lang() {
+    let go_source = "package main\n\nfunc double(x int) int {\n\treturn x * 2\n}\n";
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg("-")
+        .arg("--source-lang")
+        .arg("go")
+        .arg("--lang")
+        .arg("en")
+        .write_stdin(go_source);
+
+    cmd.assert()
+        .success()
+        .stdout(contains("FUNCTION double"))
+        .stdout(contains("RETURN x * 2"));
+}
