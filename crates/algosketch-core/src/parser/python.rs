@@ -226,6 +226,7 @@ fn parse_typed_assignment(
     }))
 }
 
+// NOTE: a `for … else:` clause is intentionally dropped (pre-existing, out of scope).
 fn parse_for_stmt(
     source: &str,
     node: tree_sitter::Node,
@@ -243,6 +244,21 @@ fn parse_for_stmt(
 
     let var = match target.kind() {
         "identifier" => node_text(source, target).to_string(),
+        "pattern_list" | "tuple" => {
+            // flat unpack like `for k, v in pairs` → display string "k, v";
+            // starred/nested patterns stay Raw (see spec §2)
+            let names: Vec<&str> = (0..target.named_child_count())
+                .filter_map(|i| target.named_child(i))
+                .filter(|c| c.kind() == "identifier")
+                .map(|c| node_text(source, c))
+                .collect();
+            let total = target.named_child_count();
+            if names.len() == total && total >= 2 {
+                names.join(", ")
+            } else {
+                return Ok(record_raw_stmt(source, node, diag));
+            }
+        }
         _ => return Ok(record_raw_stmt(source, node, diag)),
     };
 
@@ -262,6 +278,18 @@ fn python_for_kind(
         let callee = iter
             .named_child(0)
             .ok_or_else(|| parse_err("call missing callee"))?;
+        if callee.kind() == "identifier" && node_text(source, callee) == "enumerate" {
+            // `for i, x in enumerate(e)` → FOR EACH i, x IN e
+            // (index-from-0 semantics intentionally dropped; see spec §2.2)
+            let arg = iter
+                .named_child(1)
+                .and_then(|args| args.named_child(0))
+                .ok_or_else(|| parse_err("enumerate missing argument"))?;
+            return Ok(ForKind::ForEach {
+                var,
+                iter: parse_expr(source, arg, diag)?,
+            });
+        }
         if callee.kind() == "identifier" && node_text(source, callee) == "range" {
             let args_node = iter
                 .named_child(1)
@@ -620,6 +648,69 @@ def rebuild_path(came_from, current):
             panic!("expected while");
         };
         assert_eq!(cond, &Expr::Raw("current in came_from".to_string()));
+    }
+
+    #[test]
+    fn parses_tuple_unpacking_for() {
+        let source = "def f(pairs):\n    for k, v in pairs:\n        g(k)\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "k, v");
+        assert_eq!(iter, &Expr::Ident("pairs".into()));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn parses_enumerate_for() {
+        let source = "def f(xs):\n    for i, x in enumerate(xs):\n        g(x)\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "i, x");
+        assert_eq!(iter, &Expr::Ident("xs".into()));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn single_var_enumerate_for() {
+        let source = "def f(xs):\n    for x in enumerate(xs):\n        g(x)\n";
+        let (module, _) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "x");
+        assert_eq!(iter, &Expr::Ident("xs".into()));
+    }
+
+    #[test]
+    fn starred_or_nested_tuple_target_stays_raw() {
+        let source = "def f(xs):\n    for a, *rest in xs:\n        g(a)\n";
+        let (_, diag) = PythonParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
     }
 
     #[test]
