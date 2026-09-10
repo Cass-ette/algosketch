@@ -67,28 +67,42 @@ string; if/else-if chains already render). No new IR nodes.
 
 - Python: unit tests — tuple-for shape, enumerate loop shape, class extraction
   (`class Solution:` + two methods → two `Item::Function`s, fields skipped silently,
-  diag 0 for methods), existing class-Raw behavior test updated/removed accordingly.
+  diag 0 for methods).
 - Go: unit tests — if-init emits VarDecl+If (diag 0), two-var range ForEach shape,
   tagless switch → else-if chain skeleton, tagged switch → Eq condition, fallthrough → Raw.
+  **Three existing Go tests pin the Raw fallbacks this milestone removes and are REWRITTEN
+  for the structured output**: `two_var_range_falls_back_to_raw`, `if_with_initializer_falls_back_to_raw`,
+  `switch_statement_falls_back_to_raw` (the fallthrough/type-switch Raw cases get new
+  dedicated tests).
+- Python edge notes for the implementer: non-flat tuple targets (`for a, *rest`, nested
+  patterns) stay Raw; a `for … else:` clause continues to be silently dropped (pre-existing,
+  out of scope — leave a one-line comment if the code path is touched).
 - CLI pinning: python `class Solution:` file renders both methods; go file with
   `if err := f(); err != nil` renders structured (decl + IF), no warning.
 - Cross-language canary: untouched, must stay green (5×4 budgets unchanged).
 
 ## 6. Distribution (crates.io readiness)
 
-- Package metadata on `algosketch-cli` (the publishable binary, name `algosketch`):
-  `description` ("Turn real source code into language-neutral pseudocode and
-  human-readable explanations"), `keywords` (["pseudocode", "cli", "tree-sitter",
-  "algorithm", "code-review"] — max 5), `categories` (["command-line-utilities",
-  "development-tools"]), `homepage`/`repository` (github), `readme` (README.md),
-  `license-file` inheritance already correct (Apache-2.0 field + LICENSE-APACHE).
-- `algosketch-core` gets matching metadata (it publishes as a dependency).
-- `cargo publish --dry-run` clean for both crates (network metadata check included).
-- Actual publish: NOT executed — requires `cargo login` with the owner's crates.io
-  token. The final report surfaces the exact two commands for the user.
-- README: add a one-line install section (`cargo install algosketch`) after publish
-  is confirmed — added in this milestone behind the assumption the user runs the
-  publish; wording notes "or build from source".
+- **Package rename**: the CLI crate's package `name` changes `algosketch-cli` → `algosketch`
+  (directory stays `crates/algosketch-cli`; the `[[bin]] name = "algosketch"` stays). This
+  makes `cargo install algosketch` resolve to our package. The freed `algosketch-cli` name
+  is left unregistered. `Command::cargo_bin("algosketch")` in tests resolves the BIN name
+  and is unaffected.
+- Package metadata on `algosketch` (the binary): `description` ("Turn real source code into
+  language-neutral pseudocode and human-readable explanations"), `keywords` (["pseudocode",
+  "cli", "tree-sitter", "algorithm", "code-review"] — max 5), `categories`
+  (["command-line-utilities", "development-tools"]), `homepage`/`repository` (github),
+  `readme = "../../README.md"` (out-of-package readme paths are supported and packed).
+- `algosketch-core` gets matching metadata; its description is refreshed to name all four
+  languages (currently stale at three).
+- **Dry-run scope**: `cargo publish --dry-run` is verified for `algosketch-core` only.
+  The cli crate's dry-run cannot pass before core is actually published — its packaged
+  dependency resolves against the registry, and core 0.2.1 does not exist there yet.
+- **Publish order (documented for the owner)**: `cargo publish -p algosketch-core` FIRST,
+  then `cargo publish -p algosketch`. Actual publish NOT executed — requires `cargo login`
+  with the owner's crates.io token; the final report surfaces the exact commands.
+- README: install section (`cargo install algosketch` + "or build from source") — added now;
+  it only becomes live once the owner publishes.
 
 ## 7. Version & docs
 
@@ -97,7 +111,8 @@ string; if/else-if chains already render). No new IR nodes.
   (`| M7 | Coverage + distribution | Python classes/enumerate/tuple-for; Go if-init/switch/two-var range; crates.io-ready metadata; v0.2.1. |`);
   completion line → M1–M7 / v0.2.1.
 - README: status line → v0.2.1; the two lingering "v0.1 is intentionally not…" scope
-  sentences reworded to version-neutral ("algosketch is intentionally not…").
+  sentences AND the two "v0.1 is fully rule-based / v0.1 完全走规则路径" sentences reworded
+  to version-neutral ("algosketch is intentionally not…" / "algosketch 完全走规则路径").
 
 ## 8. Acceptance criteria
 
@@ -106,7 +121,8 @@ string; if/else-if chains already render). No new IR nodes.
 - [ ] `if err := f(); err != nil` renders structured (init + IF) with zero warnings.
 - [ ] Two-var `range` renders structured; switch renders as if/else-if chains; fallthrough/type-switch stay loud Raw.
 - [ ] Cross-language canary green, budgets unchanged; full workspace suite green; fmt/clippy clean.
-- [ ] `cargo publish --dry-run` succeeds for both crates.
+- [ ] `cargo publish --dry-run` succeeds for `algosketch-core` (cli dry-run deferred to
+      publish time by design — registry dependency ordering).
 - [ ] `algosketch --version` → 0.2.1; `v0.2.1` tagged after merge; publish commands surfaced to the owner.
 
 ## 9. Non-goals (milestone)
