@@ -50,7 +50,9 @@ impl LanguageParser for PythonParser {
         let mut items = Vec::new();
         for i in 0..root.named_child_count() {
             let child = root.named_child(i).unwrap();
-            if child.kind() == "function_definition" {
+            if child.kind() == "class_definition" {
+                collect_class_methods(source, child, &mut items, &mut diag)?;
+            } else if child.kind() == "function_definition" {
                 items.push(parse_function(source, child, &mut diag)?);
             } else {
                 items.push(record_raw_item(source, child, &mut diag));
@@ -64,6 +66,26 @@ impl LanguageParser for PythonParser {
             diag,
         ))
     }
+}
+
+fn collect_class_methods(
+    source: &str,
+    node: tree_sitter::Node,
+    items: &mut Vec<Item>,
+    diag: &mut RawDiagnostics,
+) -> Result<()> {
+    let body = node
+        .child_by_field_name("body")
+        .ok_or_else(|| parse_err("class missing body"))?;
+    for i in 0..body.named_child_count() {
+        let child = body.named_child(i).unwrap();
+        if child.kind() == "function_definition" {
+            items.push(parse_function(source, child, diag)?);
+        }
+        // field assignments / docstrings / nested classes: skipped silently
+        // (matches Java's class-field handling; see spec §2.3)
+    }
+    Ok(())
 }
 
 fn parse_function(
@@ -711,6 +733,34 @@ def rebuild_path(came_from, current):
         let source = "def f(xs):\n    for a, *rest in xs:\n        g(a)\n";
         let (_, diag) = PythonParser::new().parse(source).unwrap();
         assert_eq!(diag.statements, 1);
+    }
+
+    #[test]
+    fn extracts_python_class_methods() {
+        // NOTE: bodies use parser-supported constructs only (`[1, 2]`/`pass`
+        // are Raw today); this test pins class extraction, not body coverage.
+        let source = "class Solution:\n    def two_sum(self, nums, target):\n        return 1, 2\n\n    def other(self):\n        return None\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        assert_eq!(module.items.len(), 2);
+        let Item::Function(first) = &module.items[0] else {
+            panic!()
+        };
+        assert_eq!(first.name, "two_sum");
+        assert_eq!(first.params[0].name, "self");
+        let Item::Function(second) = &module.items[1] else {
+            panic!()
+        };
+        assert_eq!(second.name, "other");
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn class_fields_and_docstrings_skip_silently() {
+        let source =
+            "class C:\n    \"\"\"doc\"\"\"\n    x = 1\n\n    def m(self):\n        return self.x\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        assert_eq!(module.items.len(), 1);
+        assert_eq!(diag.total(), 0);
     }
 
     #[test]
