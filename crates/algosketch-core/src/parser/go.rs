@@ -191,6 +191,7 @@ fn parse_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
         "break_statement" => Ok(Stmt::Break),
         "continue_statement" => Ok(Stmt::Continue),
         "for_statement" => parse_for_stmt(source, node, diag),
+        "expression_switch_statement" => parse_switch_stmt(source, node, diag),
         _ => Ok(record_raw_stmt(source, node, diag)),
     }
 }
@@ -333,6 +334,96 @@ fn parse_for_stmt(
         // Not a shape valid Go produces (gated by the upstream has_error
         // check): keep the statement loud, not misparsed.
         _ => Ok(record_raw_stmt(source, node, diag)),
+    }
+}
+
+/// `expression_switch_statement` → if/else-if chain (spec §2). Grammar facts
+/// (tree-sitter-go 0.25 node-types.json + CST dump): optional `initializer`
+/// field (an init clause — present → the whole switch stays Raw: the init's
+/// per-case scoping cannot be flattened) and optional `value` field (the
+/// tag); case children are `expression_case` nodes with a required `value`
+/// field (an `expression_list`) and an optional `statement_list` body, plus
+/// at most one `default_case` (body only) — `parse_block`'s
+/// find-statement_list lookup works on both directly. All case/child scans
+/// are kind-filtered, so comments (named extras) cannot disturb them;
+/// `initializer`/tag lookups are field-based (safe). A `fallthrough_statement`
+/// in any case body keeps the whole switch Raw (its fall-into-next-case
+/// semantics have no IR shape); `type_switch_statement`/`select_statement`
+/// are separate kinds and stay Raw by not matching the dispatch arm.
+fn parse_switch_stmt(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Stmt> {
+    if node.child_by_field_name("initializer").is_some() {
+        return Ok(record_raw_stmt(source, node, diag));
+    }
+    let cases = named_children_of_kind(node, "expression_case");
+    let default_case = named_child_by_kind(node, "default_case");
+    let has_fallthrough = |case: tree_sitter::Node| {
+        named_child_by_kind(case, "statement_list")
+            .map(|list| !named_children_of_kind(list, "fallthrough_statement").is_empty())
+            .unwrap_or(false)
+    };
+    if cases.iter().any(|c| has_fallthrough(*c))
+        || default_case.map(has_fallthrough).unwrap_or(false)
+    {
+        return Ok(record_raw_stmt(source, node, diag));
+    }
+
+    // Build the chain right-to-left: the default block (if any) is the
+    // innermost else; each case wraps the chain accumulated so far (nested
+    // as `Block(vec![If])`, the same else-if shape as `parse_if_stmt_vec`).
+    let mut else_block: Option<Block> = default_case
+        .map(|case| parse_block(source, case, diag))
+        .transpose()?;
+    let tag = node
+        .child_by_field_name("value")
+        .map(|tag| parse_expr(source, tag, diag))
+        .transpose()?;
+    let mut chain: Option<Stmt> = None;
+    for case in cases.iter().rev() {
+        let value = case
+            .child_by_field_name("value")
+            .ok_or_else(|| parse_err("expression_case missing value"))?;
+        let exprs = parse_expression_list(source, value, diag)?;
+        // Tagged: cond = OR-fold of Eq(tag, expr) over the case's expression
+        // list; tagless: the case expressions are full boolean expressions,
+        // OR-folded when several (left-associative in both cases).
+        let cond = match &tag {
+            Some(tag) => exprs
+                .into_iter()
+                .map(|expr| Expr::Binary {
+                    op: BinOp::Eq,
+                    lhs: Box::new(tag.clone()),
+                    rhs: Box::new(expr),
+                })
+                .reduce(or_fold),
+            None => exprs.into_iter().reduce(or_fold),
+        }
+        .ok_or_else(|| parse_err("expression_case empty value"))?;
+        let inner_else = else_block
+            .take()
+            .or_else(|| chain.take().map(|stmt| Block(vec![stmt])));
+        chain = Some(Stmt::If {
+            cond,
+            then_block: parse_block(source, *case, diag)?,
+            else_block: inner_else,
+        });
+    }
+    match chain {
+        Some(stmt) => Ok(stmt),
+        // A switch with no expression_case (empty or default-only) has no
+        // chain to build: kept loud rather than guessed.
+        None => Ok(record_raw_stmt(source, node, diag)),
+    }
+}
+
+fn or_fold(acc: Expr, next: Expr) -> Expr {
+    Expr::Binary {
+        op: BinOp::Or,
+        lhs: Box::new(acc),
+        rhs: Box::new(next),
     }
 }
 
@@ -1020,17 +1111,84 @@ mod tests {
     }
 
     #[test]
-    fn switch_statement_falls_back_to_raw() {
-        // `switch` has no structured IR shape: one loud Raw with a diagnostic
-        // (acceptance-checklist pin; defer is covered the same way elsewhere).
-        let source = "package main\n\nfunc f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\treturn 1\n\t}\n\treturn 0\n}\n";
+    fn tagless_switch_parses_as_if_chain() {
+        let source = "package main\n\nfunc f(a int, b int) int {\n\tswitch {\n\tcase a > b:\n\t\treturn a\n\tcase b > a:\n\t\treturn b\n\tdefault:\n\t\treturn 0\n\t}\n}\n";
         let (module, diag) = GoParser::new().parse(source).unwrap();
         let Item::Function(f) = &module.items[0] else {
-            panic!("expected function");
+            panic!()
         };
-        use crate::ir::Stmt;
-        assert!(matches!(&f.body.0[0], Stmt::Raw(text) if text.contains("switch x")));
+        let Stmt::If {
+            cond,
+            then_block,
+            else_block: Some(els),
+        } = &f.body.0[0]
+        else {
+            panic!("expected if chain");
+        };
+        assert!(matches!(cond, crate::ir::Expr::Binary { .. }));
+        assert_eq!(then_block.0.len(), 1);
+        assert!(matches!(els.0[0], Stmt::If { .. })); // else-if nesting
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn tagged_switch_parses_as_equality_chain() {
+        let source = "package main\n\nfunc f(x int) string {\n\tswitch x {\n\tcase 1:\n\t\treturn \"one\"\n\tcase 2:\n\t\treturn \"two\"\n\t}\n\treturn \"\"\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::If {
+            cond,
+            else_block: Some(els),
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected if chain");
+        };
+        assert!(matches!(
+            cond,
+            crate::ir::Expr::Binary {
+                op: crate::ir::BinOp::Eq,
+                ..
+            }
+        ));
+        assert!(matches!(els.0[0], Stmt::If { .. }));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn multi_expr_case_parses_as_or_chain() {
+        let source = "package main\n\nfunc f(x int) int {\n\tswitch x {\n\tcase 1, 2, 3:\n\t\treturn 1\n\tdefault:\n\t\treturn 0\n\t}\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::If { cond, .. } = &f.body.0[0] else {
+            panic!()
+        };
+        // (x = 1 OR x = 2) OR x = 3 — any nested Binary{Or} shape accepted
+        assert!(matches!(
+            cond,
+            crate::ir::Expr::Binary {
+                op: crate::ir::BinOp::Or,
+                ..
+            }
+        ));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn fallthrough_switch_stays_raw() {
+        let source = "package main\n\nfunc f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\tfallthrough\n\tcase 2:\n\t\treturn 2\n\t}\n\treturn 0\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
         assert_eq!(diag.statements, 1);
-        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+    }
+
+    #[test]
+    fn type_switch_stays_raw() {
+        let source = "package main\n\nfunc f(v interface{}) int {\n\tswitch t := v.(type) {\n\tcase int:\n\t\treturn t\n\t}\n\treturn 0\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
     }
 }
