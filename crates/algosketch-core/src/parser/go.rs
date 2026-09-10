@@ -154,6 +154,8 @@ fn parse_block(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics)
             // One declaration can carry several specs / several names, each
             // yielding its own statement.
             stmts.append(&mut parse_var_declaration(source, child, diag)?);
+        } else if child.kind() == "if_statement" {
+            stmts.append(&mut parse_if_stmt_vec(source, child, diag)?);
         } else {
             stmts.push(parse_stmt(source, child, diag)?);
         }
@@ -188,23 +190,43 @@ fn parse_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
         }
         "break_statement" => Ok(Stmt::Break),
         "continue_statement" => Ok(Stmt::Continue),
-        "if_statement" => parse_if_stmt(source, node, diag),
         "for_statement" => parse_for_stmt(source, node, diag),
         _ => Ok(record_raw_stmt(source, node, diag)),
     }
 }
 
+/// `if x := g(); x > 0 {` — the `initializer` field holds a DIRECT
+/// `short_var_declaration`/`assignment_statement` node (verified in the CST),
+/// parsed with the same statement machinery and emitted as a PRECEDING
+/// statement, then the if itself (init scoping intentionally flattened; spec
+/// §2). Multi-name inits (`if x, y := f(); c`) follow the multi-name rules of
+/// `parse_stmt` on the init node. The IR has no multi-statement node, so this
+/// returns the same `Vec<Stmt>` shape as `parse_var_declaration` and the
+/// block-level loop appends both.
+fn parse_if_stmt_vec(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Vec<Stmt>> {
+    let mut stmts = Vec::new();
+    if let Some(init) = node.child_by_field_name("initializer") {
+        // Field-based lookup: comments (named extras) cannot displace it. Any
+        // init shape the statement machinery cannot map lands as one loud Raw
+        // statement — never silently dropped.
+        stmts.push(parse_stmt(source, init, diag)?);
+    }
+    stmts.push(parse_if_stmt(source, node, diag)?);
+    Ok(stmts)
+}
+
 /// `if cond {} else if ... {} else {}`: tree-sitter-go nests `else if` as the
 /// `alternative` being directly an `if_statement` (no else_if_clause kind) —
 /// re-nested as `Block(vec![If])` so the IR shape matches python/java and the
-/// cross-language skeleton rendering stays uniform.
+/// cross-language skeleton rendering stays uniform. Only reachable via
+/// `parse_if_stmt_vec`, which guarantees any initializer was already emitted
+/// (an else-if arm may carry its own init in valid Go, so the arm routes back
+/// through the vec path).
 fn parse_if_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Stmt> {
-    // `if x := g(); x > 0 {`: the `initializer` field has no structured IR
-    // shape — the whole statement stays one loud Raw (two-var-range
-    // precedent) rather than parsing the if and silently dropping the init.
-    if node.child_by_field_name("initializer").is_some() {
-        return Ok(record_raw_stmt(source, node, diag));
-    }
     let cond = node
         .child_by_field_name("condition")
         .ok_or_else(|| parse_err("if missing condition"))?;
@@ -215,7 +237,7 @@ fn parse_if_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostic
         .child_by_field_name("alternative")
         .map(|alternative| {
             if alternative.kind() == "if_statement" {
-                parse_if_stmt(source, alternative, diag).map(|stmt| Block(vec![stmt]))
+                parse_if_stmt_vec(source, alternative, diag).map(Block)
             } else {
                 parse_block(source, alternative, diag)
             }
@@ -958,23 +980,30 @@ mod tests {
     }
 
     #[test]
-    fn if_with_initializer_falls_back_to_raw() {
-        // `if x := g(); x > 0 {`: tree-sitter-go exposes the init statement
-        // as an `initializer` field the IR cannot express — the whole if must
-        // fall back to one loud Raw (two-var-range precedent), never silently
-        // drop `x := g()` (carried from the final review).
+    fn if_with_initializer_emits_decl_then_if() {
         let source = "package main\n\nfunc f() int {\n\tif x := g(); x > 0 {\n\t\treturn x\n\t}\n\treturn 0\n}\n";
         let (module, diag) = GoParser::new().parse(source).unwrap();
         let Item::Function(f) = &module.items[0] else {
-            panic!("expected function");
+            panic!()
         };
         use crate::ir::Stmt;
-        let Stmt::Raw(text) = &f.body.0[0] else {
-            panic!("expected raw fallback for if-with-initializer");
+        assert!(matches!(&f.body.0[0], Stmt::VarDecl(v) if v.name == "x"));
+        assert!(matches!(&f.body.0[1], Stmt::If { .. }));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn if_with_plain_assignment_init_emits_assign_then_if() {
+        let source =
+            "package main\n\nfunc f() {\n\tx := 1\n\tif x = g(); x > 0 {\n\t\tg(x)\n\t}\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
         };
-        assert!(text.contains("if x := g()"));
-        assert_eq!(diag.statements, 1);
-        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+        use crate::ir::Stmt;
+        assert!(matches!(&f.body.0[1], Stmt::Assign { .. })); // index 1: first is `x := 1`
+        assert!(matches!(&f.body.0[2], Stmt::If { .. }));
+        assert_eq!(diag.total(), 0);
     }
 
     #[test]
