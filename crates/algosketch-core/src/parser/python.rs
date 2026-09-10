@@ -266,9 +266,9 @@ fn parse_for_stmt(
 
     let var = match target.kind() {
         "identifier" => node_text(source, target).to_string(),
-        "pattern_list" | "tuple" => {
-            // flat unpack like `for k, v in pairs` → display string "k, v";
-            // starred/nested patterns stay Raw (see spec §2)
+        "pattern_list" | "tuple_pattern" => {
+            // flat unpack like `for k, v in pairs` / `for (k, v) in pairs`
+            // → display string "k, v"; starred/nested patterns stay Raw (see spec §2)
             let names: Vec<&str> = (0..target.named_child_count())
                 .filter_map(|i| target.named_child(i))
                 .filter(|c| c.kind() == "identifier")
@@ -670,6 +670,24 @@ def rebuild_path(came_from, current):
             panic!("expected while");
         };
         assert_eq!(cond, &Expr::Raw("current in came_from".to_string()));
+    }
+
+    #[test]
+    fn parenthesized_tuple_target_parses() {
+        let source = "def f(pairs):\n    for (k, v) in pairs:\n        g(k)\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, .. },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "k, v");
+        assert_eq!(diag.total(), 0);
     }
 
     #[test]
