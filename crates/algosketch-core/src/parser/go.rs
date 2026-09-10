@@ -290,9 +290,11 @@ fn parse_for_stmt(
     }
 
     if let Some(clause) = named_child_by_kind(node, "range_clause") {
-        // `for v := range xs`: the left side is an expression_list holding
-        // the (single) loop variable. Two variables (`for i, v := range xs`)
-        // have no structured shape — the whole statement stays a loud Raw.
+        // `for v := range xs` / `for i, v := range xs`: the left side is an
+        // expression_list of loop variables — flat identifiers join into the
+        // display var ("i, v", mirroring Python tuple-for); any non-identifier
+        // element has no structured shape and keeps the whole statement a
+        // loud Raw.
         let (Some(left), Some(right)) = (
             clause.child_by_field_name("left"),
             clause.child_by_field_name("right"),
@@ -300,15 +302,15 @@ fn parse_for_stmt(
             return Ok(record_raw_stmt(source, node, diag));
         };
         let names = identifier_names(source, left);
-        return match names.as_deref() {
-            Some([var]) => Ok(Stmt::For {
+        return match names {
+            Some(names) => Ok(Stmt::For {
                 kind: ForKind::ForEach {
-                    var: var.to_string(),
+                    var: names.join(", "),
                     iter: parse_expr(source, right, diag)?,
                 },
                 body: parse_block(source, body, diag)?,
             }),
-            _ => Ok(record_raw_stmt(source, node, diag)),
+            None => Ok(record_raw_stmt(source, node, diag)),
         };
     }
 
@@ -915,11 +917,22 @@ mod tests {
     }
 
     #[test]
-    fn two_var_range_falls_back_to_raw() {
+    fn two_var_range_parses_as_foreach() {
         let source = "package main\n\nfunc f(xs []int) {\n\tfor i, v := range xs {\n\t\tg(i)\n\t\tg(v)\n\t}\n}\n";
-        let (_, diag) = GoParser::new().parse(source).unwrap();
-        assert_eq!(diag.statements, 1);
-        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "i, v");
+        assert_eq!(iter, &Expr::Ident("xs".into()));
+        assert_eq!(diag.total(), 0);
     }
 
     #[test]
