@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use algosketch_core::diagnostics::RawDiagnostics;
 use algosketch_core::ir::Item;
-use algosketch_core::parser::{CppParser, JavaParser, LanguageParser, PythonParser};
+use algosketch_core::parser::{CppParser, GoParser, JavaParser, LanguageParser, PythonParser};
 use algosketch_core::renderer::{ExplainRenderer, PseudoRenderer};
 use algosketch_core::{NaturalLang, PseudoError, SourceLang};
 use clap::{Parser, ValueEnum};
@@ -67,6 +67,7 @@ enum CliLang {
     Python,
     Java,
     Cpp,
+    Go,
 }
 
 impl From<CliLang> for SourceLang {
@@ -75,6 +76,7 @@ impl From<CliLang> for SourceLang {
             CliLang::Python => SourceLang::Python,
             CliLang::Java => SourceLang::Java,
             CliLang::Cpp => SourceLang::Cpp,
+            CliLang::Go => SourceLang::Go,
         }
     }
 }
@@ -173,6 +175,7 @@ fn run(cli: Cli) -> Result<(), PseudoError> {
         SourceLang::Python => PythonParser::new().parse(&source)?,
         SourceLang::Java => JavaParser::new().parse(&source)?,
         SourceLang::Cpp => CppParser::new().parse(&source)?,
+        SourceLang::Go => GoParser::new().parse(&source)?,
     };
 
     if !cli.quiet && raw_diag.total() > 0 {

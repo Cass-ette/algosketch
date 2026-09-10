@@ -5,10 +5,12 @@ use crate::SourceLang;
 
 pub(crate) mod common;
 pub mod cpp;
+pub mod go;
 pub mod java;
 pub mod python;
 
 pub use cpp::CppParser;
+pub use go::GoParser;
 pub use java::JavaParser;
 pub use python::PythonParser;
 

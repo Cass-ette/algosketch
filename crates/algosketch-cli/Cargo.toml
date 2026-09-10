@@ -13,7 +13,7 @@ name = "algosketch"
 path = "src/main.rs"
 
 [dependencies]
-algosketch-core = { path = "../algosketch-core", version = "0.1.0" }
+algosketch-core = { path = "../algosketch-core", version = "0.2.0" }
 clap.workspace = true
 
 [dev-dependencies]
