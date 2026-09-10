@@ -310,7 +310,12 @@ git commit -m "feat(core): structure Go if-with-initializer"
 
 - [ ] **Step 4: Tests green** + clippy + fmt.
 
-- [ ] **Step 5: Commit** — `feat(core): parse Go two-variable range loops`
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/algosketch-core/src/parser/go.rs
+git commit -m "feat(core): parse Go two-variable range loops"
+```
 
 ### Task 5: Go switch → if/else-if chains
 
@@ -378,17 +383,22 @@ git commit -m "feat(core): structure Go if-with-initializer"
 
 - [ ] **Step 3: Implement**
 
-`parse_switch_stmt(source, node, diag) -> Result<Stmt>` (verify kinds/fields via CST dump first — expected: `expression_switch_statement` with optional `tag` field; `expression_case` children with `expression` list field? and `body`; `default` handling; `fallthrough` inside bodies; type switches are `type_switch_statement` kind — stays Raw by simply not matching):
+`parse_switch_stmt(source, node, diag) -> Result<Stmt>` (grammar facts verified against tree-sitter-go 0.25 node-types.json: `expression_switch_statement` has optional `initializer` field (an init clause — if present → Raw, whole switch) and optional **`value`** field (the tag expression); case children are `expression_case` nodes with a required **`value`** field (an `expression_list`) and an optional `statement_list` child holding the body (`parse_block`'s find-statement_list lookup works on it directly); `default_case` has just the body; `fallthrough_statement` is a statement kind; type switches are `type_switch_statement` — stays Raw by simply not matching):
 
 - If any case body contains a `fallthrough` statement → `record_raw_stmt` the whole switch.
 - Build an else-if chain right-to-left: default block (if present) is the innermost else; each `expression_case` contributes `If { cond, then: body, else: accumulated }`.
-- Tagged: cond per case = OR-chain of `Binary { Eq, tag, expr }` over the case's expressions; multi-expr → fold with `BinOp::Or` left-associative.
+- Tagged: cond per case = OR-chain of `Binary { Eq, tag, expr }` over the case's `value` expression_list; multi-expr → fold with `BinOp::Or` left-associative.
 - Tagless: cond = OR-chain when multiple exprs, else the single expression (case exprs are full boolean expressions).
-- Route `expression_switch_statement` in the statement dispatch; `type_switch_statement`, `select_statement`, and switches with an init clause (`switch z := f(); z` — the init field present) fall to Raw.
+- Route `expression_switch_statement` in the statement dispatch; `type_switch_statement`, `select_statement`, and initializer-bearing switches fall to Raw.
 
 - [ ] **Step 4: Full suite green** + clippy + fmt.
 
-- [ ] **Step 5: Commit** — `feat(core): parse Go switch as if chains`
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/algosketch-core/src/parser/go.rs
+git commit -m "feat(core): parse Go switch as if chains"
+```
 
 ---
 
@@ -447,7 +457,12 @@ fn go_err_idiom_renders_structured() {
 
 - [ ] **Step 2: Run** — both pass immediately (pinning). `cargo test --workspace` (report total); clippy; fmt.
 
-- [ ] **Step 3: Commit** — `test(cli): pin class and err-idiom coverage`
+- [ ] **Step 3: Commit**
+
+```bash
+git add crates/algosketch-cli/tests/cli.rs
+git commit -m "test(cli): pin class and err-idiom coverage"
+```
 
 ### Task 7: Package rename + crates.io metadata + README install
 
@@ -466,7 +481,7 @@ categories = ["command-line-utilities", "development-tools"]
 readme = "../../README.md"
 ```
 
-`crates/algosketch-core/Cargo.toml` `[package]`: add matching `description` (name all FOUR languages — the current lib doc comment says three; refresh it), `keywords` (["pseudocode", "tree-sitter", "parser", "ir", "rendering"]), `categories` (["development-tools"]), `readme = "../../README.md"`.
+`crates/algosketch-core/Cargo.toml` `[package]`: add matching `description` (the CURRENT description field there is stale at three languages — "Python / Java / C++"; refresh it to name all FOUR), `keywords` (["pseudocode", "tree-sitter", "parser", "ir", "rendering"]), `categories` (["development-tools"]), `readme = "../../README.md"`.
 
 `homepage`/`repository`: workspace already carries `repository`; add nothing if inheritable — check whether `homepage` is worth adding (skip unless trivial: `homepage` is optional; leave it out, YAGNI).
 
