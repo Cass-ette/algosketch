@@ -4,7 +4,15 @@
 >
 > 把真实的源代码翻译成伪代码与人类可读的解释 —— 用于学习、回顾和分享算法。
 
-**Status / 状态**: v0.2 — supports a focused subset of algorithm-style Python, Java, C++, and Go code. See [`docs/superpowers/specs/2026-05-20-algosketch-design.md`](docs/superpowers/specs/2026-05-20-algosketch-design.md) for the full design.
+**Status / 状态**: v0.2.1 — supports a focused subset of algorithm-style Python, Java, C++, and Go code. See [`docs/superpowers/specs/2026-05-20-algosketch-design.md`](docs/superpowers/specs/2026-05-20-algosketch-design.md) for the full design.
+
+## Install / 安装
+
+```bash
+cargo install algosketch
+```
+
+Or build from source: `cargo install --git https://github.com/Cass-ette/algosketch --path crates/algosketch-cli`.
 
 ---
 
@@ -17,7 +25,7 @@
 
 Both outputs are independently toggleable. Default output format is Markdown.
 
-v0.1 is intentionally not a full Python / Java / C++ / Go translator. It targets compact algorithm implementations with common assignments, branching, loops, calls, indexing, and returns. Unsupported fragments are preserved as Raw fallback nodes; by default the CLI warns on stderr when any fallback is present, and `--quiet` suppresses that warning.
+algosketch is intentionally not a full Python / Java / C++ / Go translator. It targets compact algorithm implementations with common assignments, branching, loops, calls, indexing, and returns. Unsupported fragments are preserved as Raw fallback nodes; by default the CLI warns on stderr when any fallback is present, and `--quiet` suppresses that warning.
 
 ### Usage
 
@@ -39,7 +47,7 @@ cat snippet.py | algosketch - --source-lang python
 
 - Rust workspace, single binary, four tree-sitter grammars (Python / Java / C++ / Go) compiled in.
 - Source code is normalized into a **unified IR** so renderers do not care which language the input came from.
-- Provider trait reserved for future LLM-backed mode; v0.1 is fully rule-based.
+- Provider trait reserved for future LLM-backed mode; algosketch is fully rule-based.
 - CLI first, Web later: core is a library, ready for WASM or HTTP backend down the line.
 
 See the design spec for the full architecture, IR shape, error model, and milestones.
@@ -121,7 +129,7 @@ Apache-2.0 — see [`LICENSE-APACHE`](LICENSE-APACHE).
 
 两路输出可以独立开关。默认输出格式为 Markdown。
 
-v0.1 不是完整的 Python / Java / C++ / Go 翻译器，而是面向常见算法代码子集：赋值、分支、循环、调用、下标访问与返回等。暂不支持的片段会保留为 Raw fallback；默认情况下 CLI 会在 stderr 输出警告，`--quiet` 可以关闭该警告。
+algosketch 不是完整的 Python / Java / C++ / Go 翻译器，而是面向常见算法代码子集：赋值、分支、循环、调用、下标访问与返回等。暂不支持的片段会保留为 Raw fallback；默认情况下 CLI 会在 stderr 输出警告，`--quiet` 可以关闭该警告。
 
 ### 用法
 
@@ -143,7 +151,7 @@ cat snippet.py | algosketch - --source-lang python
 
 - Rust workspace，单二进制，四种 tree-sitter grammar（Python / Java / C++ / Go）直接编进可执行文件。
 - 输入源码先归一化为一份**统一 IR**，渲染器完全不关心源语言是什么。
-- 预留 provider trait，将来可接入 LLM；v0.1 完全走规则路径。
+- 预留 provider trait，将来可接入 LLM；algosketch 完全走规则路径。
 - CLI 优先，Web 在后：核心是库，方便后续编 WASM 或做 HTTP 后端。
 
 完整架构、IR 形状、错误模型与里程碑见设计文档。

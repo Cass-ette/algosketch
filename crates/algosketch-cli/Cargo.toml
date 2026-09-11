@@ -1,6 +1,9 @@
 [package]
-name = "algosketch-cli"
-description = "Command-line interface for algosketch."
+name = "algosketch"
+description = "Turn real source code into language-neutral pseudocode and human-readable explanations"
+keywords = ["pseudocode", "cli", "tree-sitter", "algorithm", "code-review"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +16,7 @@ name = "algosketch"
 path = "src/main.rs"
 
 [dependencies]
-algosketch-core = { path = "../algosketch-core", version = "0.2.0" }
+algosketch-core = { path = "../algosketch-core", version = "0.2.1" }
 clap.workspace = true
 
 [dev-dependencies]

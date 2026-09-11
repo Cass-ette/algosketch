@@ -50,7 +50,9 @@ impl LanguageParser for PythonParser {
         let mut items = Vec::new();
         for i in 0..root.named_child_count() {
             let child = root.named_child(i).unwrap();
-            if child.kind() == "function_definition" {
+            if child.kind() == "class_definition" {
+                collect_class_methods(source, child, &mut items, &mut diag)?;
+            } else if child.kind() == "function_definition" {
                 items.push(parse_function(source, child, &mut diag)?);
             } else {
                 items.push(record_raw_item(source, child, &mut diag));
@@ -64,6 +66,26 @@ impl LanguageParser for PythonParser {
             diag,
         ))
     }
+}
+
+fn collect_class_methods(
+    source: &str,
+    node: tree_sitter::Node,
+    items: &mut Vec<Item>,
+    diag: &mut RawDiagnostics,
+) -> Result<()> {
+    let body = node
+        .child_by_field_name("body")
+        .ok_or_else(|| parse_err("class missing body"))?;
+    for i in 0..body.named_child_count() {
+        let child = body.named_child(i).unwrap();
+        if child.kind() == "function_definition" {
+            items.push(parse_function(source, child, diag)?);
+        }
+        // field assignments / docstrings / nested classes: skipped silently
+        // (matches Java's class-field handling; see spec §2.3)
+    }
+    Ok(())
 }
 
 fn parse_function(
@@ -226,6 +248,7 @@ fn parse_typed_assignment(
     }))
 }
 
+// NOTE: a `for … else:` clause is intentionally dropped (pre-existing, out of scope).
 fn parse_for_stmt(
     source: &str,
     node: tree_sitter::Node,
@@ -243,6 +266,21 @@ fn parse_for_stmt(
 
     let var = match target.kind() {
         "identifier" => node_text(source, target).to_string(),
+        "pattern_list" | "tuple_pattern" => {
+            // flat unpack like `for k, v in pairs` / `for (k, v) in pairs`
+            // → display string "k, v"; starred/nested patterns stay Raw (see spec §2)
+            let names: Vec<&str> = (0..target.named_child_count())
+                .filter_map(|i| target.named_child(i))
+                .filter(|c| c.kind() == "identifier")
+                .map(|c| node_text(source, c))
+                .collect();
+            let total = target.named_child_count();
+            if names.len() == total && total >= 2 {
+                names.join(", ")
+            } else {
+                return Ok(record_raw_stmt(source, node, diag));
+            }
+        }
         _ => return Ok(record_raw_stmt(source, node, diag)),
     };
 
@@ -262,6 +300,18 @@ fn python_for_kind(
         let callee = iter
             .named_child(0)
             .ok_or_else(|| parse_err("call missing callee"))?;
+        if callee.kind() == "identifier" && node_text(source, callee) == "enumerate" {
+            // `for i, x in enumerate(e)` → FOR EACH i, x IN e
+            // (index-from-0 semantics intentionally dropped; see spec §2.2)
+            let arg = iter
+                .named_child(1)
+                .and_then(|args| args.named_child(0))
+                .ok_or_else(|| parse_err("enumerate missing argument"))?;
+            return Ok(ForKind::ForEach {
+                var,
+                iter: parse_expr(source, arg, diag)?,
+            });
+        }
         if callee.kind() == "identifier" && node_text(source, callee) == "range" {
             let args_node = iter
                 .named_child(1)
@@ -620,6 +670,115 @@ def rebuild_path(came_from, current):
             panic!("expected while");
         };
         assert_eq!(cond, &Expr::Raw("current in came_from".to_string()));
+    }
+
+    #[test]
+    fn parenthesized_tuple_target_parses() {
+        let source = "def f(pairs):\n    for (k, v) in pairs:\n        g(k)\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, .. },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "k, v");
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn parses_tuple_unpacking_for() {
+        let source = "def f(pairs):\n    for k, v in pairs:\n        g(k)\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "k, v");
+        assert_eq!(iter, &Expr::Ident("pairs".into()));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn parses_enumerate_for() {
+        let source = "def f(xs):\n    for i, x in enumerate(xs):\n        g(x)\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "i, x");
+        assert_eq!(iter, &Expr::Ident("xs".into()));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn single_var_enumerate_for() {
+        let source = "def f(xs):\n    for x in enumerate(xs):\n        g(x)\n";
+        let (module, _) = PythonParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "x");
+        assert_eq!(iter, &Expr::Ident("xs".into()));
+    }
+
+    #[test]
+    fn starred_or_nested_tuple_target_stays_raw() {
+        let source = "def f(xs):\n    for a, *rest in xs:\n        g(a)\n";
+        let (_, diag) = PythonParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
+    }
+
+    #[test]
+    fn extracts_python_class_methods() {
+        // NOTE: bodies use parser-supported constructs only (`[1, 2]`/`pass`
+        // are Raw today); this test pins class extraction, not body coverage.
+        let source = "class Solution:\n    def two_sum(self, nums, target):\n        return 1, 2\n\n    def other(self):\n        return None\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        assert_eq!(module.items.len(), 2);
+        let Item::Function(first) = &module.items[0] else {
+            panic!()
+        };
+        assert_eq!(first.name, "two_sum");
+        assert_eq!(first.params[0].name, "self");
+        let Item::Function(second) = &module.items[1] else {
+            panic!()
+        };
+        assert_eq!(second.name, "other");
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn class_fields_and_docstrings_skip_silently() {
+        let source =
+            "class C:\n    \"\"\"doc\"\"\"\n    x = 1\n\n    def m(self):\n        return self.x\n";
+        let (module, diag) = PythonParser::new().parse(source).unwrap();
+        assert_eq!(module.items.len(), 1);
+        assert_eq!(diag.total(), 0);
     }
 
     #[test]

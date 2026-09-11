@@ -154,6 +154,8 @@ fn parse_block(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics)
             // One declaration can carry several specs / several names, each
             // yielding its own statement.
             stmts.append(&mut parse_var_declaration(source, child, diag)?);
+        } else if child.kind() == "if_statement" {
+            stmts.append(&mut parse_if_stmt_vec(source, child, diag)?);
         } else {
             stmts.push(parse_stmt(source, child, diag)?);
         }
@@ -188,23 +190,44 @@ fn parse_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) 
         }
         "break_statement" => Ok(Stmt::Break),
         "continue_statement" => Ok(Stmt::Continue),
-        "if_statement" => parse_if_stmt(source, node, diag),
         "for_statement" => parse_for_stmt(source, node, diag),
+        "expression_switch_statement" => parse_switch_stmt(source, node, diag),
         _ => Ok(record_raw_stmt(source, node, diag)),
     }
+}
+
+/// `if x := g(); x > 0 {` — the `initializer` field holds a DIRECT
+/// `short_var_declaration`/`assignment_statement` node (verified in the CST),
+/// parsed with the same statement machinery and emitted as a PRECEDING
+/// statement, then the if itself (init scoping intentionally flattened; spec
+/// §2). Multi-name inits (`if x, y := f(); c`) follow the multi-name rules of
+/// `parse_stmt` on the init node. The IR has no multi-statement node, so this
+/// returns the same `Vec<Stmt>` shape as `parse_var_declaration` and the
+/// block-level loop appends both.
+fn parse_if_stmt_vec(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Vec<Stmt>> {
+    let mut stmts = Vec::new();
+    if let Some(init) = node.child_by_field_name("initializer") {
+        // Field-based lookup: comments (named extras) cannot displace it. Any
+        // init shape the statement machinery cannot map lands as one loud Raw
+        // statement — never silently dropped.
+        stmts.push(parse_stmt(source, init, diag)?);
+    }
+    stmts.push(parse_if_stmt(source, node, diag)?);
+    Ok(stmts)
 }
 
 /// `if cond {} else if ... {} else {}`: tree-sitter-go nests `else if` as the
 /// `alternative` being directly an `if_statement` (no else_if_clause kind) —
 /// re-nested as `Block(vec![If])` so the IR shape matches python/java and the
-/// cross-language skeleton rendering stays uniform.
+/// cross-language skeleton rendering stays uniform. Only reachable via
+/// `parse_if_stmt_vec`, which guarantees any initializer was already emitted
+/// (an else-if arm may carry its own init in valid Go, so the arm routes back
+/// through the vec path).
 fn parse_if_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostics) -> Result<Stmt> {
-    // `if x := g(); x > 0 {`: the `initializer` field has no structured IR
-    // shape — the whole statement stays one loud Raw (two-var-range
-    // precedent) rather than parsing the if and silently dropping the init.
-    if node.child_by_field_name("initializer").is_some() {
-        return Ok(record_raw_stmt(source, node, diag));
-    }
     let cond = node
         .child_by_field_name("condition")
         .ok_or_else(|| parse_err("if missing condition"))?;
@@ -215,7 +238,7 @@ fn parse_if_stmt(source: &str, node: tree_sitter::Node, diag: &mut RawDiagnostic
         .child_by_field_name("alternative")
         .map(|alternative| {
             if alternative.kind() == "if_statement" {
-                parse_if_stmt(source, alternative, diag).map(|stmt| Block(vec![stmt]))
+                parse_if_stmt_vec(source, alternative, diag).map(Block)
             } else {
                 parse_block(source, alternative, diag)
             }
@@ -268,9 +291,11 @@ fn parse_for_stmt(
     }
 
     if let Some(clause) = named_child_by_kind(node, "range_clause") {
-        // `for v := range xs`: the left side is an expression_list holding
-        // the (single) loop variable. Two variables (`for i, v := range xs`)
-        // have no structured shape — the whole statement stays a loud Raw.
+        // `for v := range xs` / `for i, v := range xs`: the left side is an
+        // expression_list of loop variables — flat identifiers join into the
+        // display var ("i, v", mirroring Python tuple-for); any non-identifier
+        // element has no structured shape and keeps the whole statement a
+        // loud Raw.
         let (Some(left), Some(right)) = (
             clause.child_by_field_name("left"),
             clause.child_by_field_name("right"),
@@ -278,15 +303,15 @@ fn parse_for_stmt(
             return Ok(record_raw_stmt(source, node, diag));
         };
         let names = identifier_names(source, left);
-        return match names.as_deref() {
-            Some([var]) => Ok(Stmt::For {
+        return match names {
+            Some(names) => Ok(Stmt::For {
                 kind: ForKind::ForEach {
-                    var: var.to_string(),
+                    var: names.join(", "),
                     iter: parse_expr(source, right, diag)?,
                 },
                 body: parse_block(source, body, diag)?,
             }),
-            _ => Ok(record_raw_stmt(source, node, diag)),
+            None => Ok(record_raw_stmt(source, node, diag)),
         };
     }
 
@@ -309,6 +334,96 @@ fn parse_for_stmt(
         // Not a shape valid Go produces (gated by the upstream has_error
         // check): keep the statement loud, not misparsed.
         _ => Ok(record_raw_stmt(source, node, diag)),
+    }
+}
+
+/// `expression_switch_statement` → if/else-if chain (spec §2). Grammar facts
+/// (tree-sitter-go 0.25 node-types.json + CST dump): optional `initializer`
+/// field (an init clause — present → the whole switch stays Raw: the init's
+/// per-case scoping cannot be flattened) and optional `value` field (the
+/// tag); case children are `expression_case` nodes with a required `value`
+/// field (an `expression_list`) and an optional `statement_list` body, plus
+/// at most one `default_case` (body only) — `parse_block`'s
+/// find-statement_list lookup works on both directly. All case/child scans
+/// are kind-filtered, so comments (named extras) cannot disturb them;
+/// `initializer`/tag lookups are field-based (safe). A `fallthrough_statement`
+/// in any case body keeps the whole switch Raw (its fall-into-next-case
+/// semantics have no IR shape); `type_switch_statement`/`select_statement`
+/// are separate kinds and stay Raw by not matching the dispatch arm.
+fn parse_switch_stmt(
+    source: &str,
+    node: tree_sitter::Node,
+    diag: &mut RawDiagnostics,
+) -> Result<Stmt> {
+    if node.child_by_field_name("initializer").is_some() {
+        return Ok(record_raw_stmt(source, node, diag));
+    }
+    let cases = named_children_of_kind(node, "expression_case");
+    let default_case = named_child_by_kind(node, "default_case");
+    let has_fallthrough = |case: tree_sitter::Node| {
+        named_child_by_kind(case, "statement_list")
+            .map(|list| !named_children_of_kind(list, "fallthrough_statement").is_empty())
+            .unwrap_or(false)
+    };
+    if cases.iter().any(|c| has_fallthrough(*c))
+        || default_case.map(has_fallthrough).unwrap_or(false)
+    {
+        return Ok(record_raw_stmt(source, node, diag));
+    }
+
+    // Build the chain right-to-left: the default block (if any) is the
+    // innermost else; each case wraps the chain accumulated so far (nested
+    // as `Block(vec![If])`, the same else-if shape as `parse_if_stmt_vec`).
+    let mut else_block: Option<Block> = default_case
+        .map(|case| parse_block(source, case, diag))
+        .transpose()?;
+    let tag = node
+        .child_by_field_name("value")
+        .map(|tag| parse_expr(source, tag, diag))
+        .transpose()?;
+    let mut chain: Option<Stmt> = None;
+    for case in cases.iter().rev() {
+        let value = case
+            .child_by_field_name("value")
+            .ok_or_else(|| parse_err("expression_case missing value"))?;
+        let exprs = parse_expression_list(source, value, diag)?;
+        // Tagged: cond = OR-fold of Eq(tag, expr) over the case's expression
+        // list; tagless: the case expressions are full boolean expressions,
+        // OR-folded when several (left-associative in both cases).
+        let cond = match &tag {
+            Some(tag) => exprs
+                .into_iter()
+                .map(|expr| Expr::Binary {
+                    op: BinOp::Eq,
+                    lhs: Box::new(tag.clone()),
+                    rhs: Box::new(expr),
+                })
+                .reduce(or_fold),
+            None => exprs.into_iter().reduce(or_fold),
+        }
+        .ok_or_else(|| parse_err("expression_case empty value"))?;
+        let inner_else = else_block
+            .take()
+            .or_else(|| chain.take().map(|stmt| Block(vec![stmt])));
+        chain = Some(Stmt::If {
+            cond,
+            then_block: parse_block(source, *case, diag)?,
+            else_block: inner_else,
+        });
+    }
+    match chain {
+        Some(stmt) => Ok(stmt),
+        // A switch with no expression_case (empty or default-only) has no
+        // chain to build: kept loud rather than guessed.
+        None => Ok(record_raw_stmt(source, node, diag)),
+    }
+}
+
+fn or_fold(acc: Expr, next: Expr) -> Expr {
+    Expr::Binary {
+        op: BinOp::Or,
+        lhs: Box::new(acc),
+        rhs: Box::new(next),
     }
 }
 
@@ -893,11 +1008,22 @@ mod tests {
     }
 
     #[test]
-    fn two_var_range_falls_back_to_raw() {
+    fn two_var_range_parses_as_foreach() {
         let source = "package main\n\nfunc f(xs []int) {\n\tfor i, v := range xs {\n\t\tg(i)\n\t\tg(v)\n\t}\n}\n";
-        let (_, diag) = GoParser::new().parse(source).unwrap();
-        assert_eq!(diag.statements, 1);
-        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::For {
+            kind: ForKind::ForEach { var, iter },
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected foreach");
+        };
+        assert_eq!(var, "i, v");
+        assert_eq!(iter, &Expr::Ident("xs".into()));
+        assert_eq!(diag.total(), 0);
     }
 
     #[test]
@@ -958,37 +1084,125 @@ mod tests {
     }
 
     #[test]
-    fn if_with_initializer_falls_back_to_raw() {
-        // `if x := g(); x > 0 {`: tree-sitter-go exposes the init statement
-        // as an `initializer` field the IR cannot express — the whole if must
-        // fall back to one loud Raw (two-var-range precedent), never silently
-        // drop `x := g()` (carried from the final review).
+    fn if_with_initializer_emits_decl_then_if() {
         let source = "package main\n\nfunc f() int {\n\tif x := g(); x > 0 {\n\t\treturn x\n\t}\n\treturn 0\n}\n";
         let (module, diag) = GoParser::new().parse(source).unwrap();
         let Item::Function(f) = &module.items[0] else {
-            panic!("expected function");
+            panic!()
         };
         use crate::ir::Stmt;
-        let Stmt::Raw(text) = &f.body.0[0] else {
-            panic!("expected raw fallback for if-with-initializer");
-        };
-        assert!(text.contains("if x := g()"));
-        assert_eq!(diag.statements, 1);
-        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+        assert!(matches!(&f.body.0[0], Stmt::VarDecl(v) if v.name == "x"));
+        assert!(matches!(&f.body.0[1], Stmt::If { .. }));
+        assert_eq!(diag.total(), 0);
     }
 
     #[test]
-    fn switch_statement_falls_back_to_raw() {
-        // `switch` has no structured IR shape: one loud Raw with a diagnostic
-        // (acceptance-checklist pin; defer is covered the same way elsewhere).
-        let source = "package main\n\nfunc f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\treturn 1\n\t}\n\treturn 0\n}\n";
+    fn if_with_plain_assignment_init_emits_assign_then_if() {
+        let source =
+            "package main\n\nfunc f() {\n\tx := 1\n\tif x = g(); x > 0 {\n\t\tg(x)\n\t}\n}\n";
         let (module, diag) = GoParser::new().parse(source).unwrap();
         let Item::Function(f) = &module.items[0] else {
-            panic!("expected function");
+            panic!()
         };
         use crate::ir::Stmt;
-        assert!(matches!(&f.body.0[0], Stmt::Raw(text) if text.contains("switch x")));
+        assert!(matches!(&f.body.0[1], Stmt::Assign { .. })); // index 1: first is `x := 1`
+        assert!(matches!(&f.body.0[2], Stmt::If { .. }));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn tagless_switch_parses_as_if_chain() {
+        let source = "package main\n\nfunc f(a int, b int) int {\n\tswitch {\n\tcase a > b:\n\t\treturn a\n\tcase b > a:\n\t\treturn b\n\tdefault:\n\t\treturn 0\n\t}\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::If {
+            cond,
+            then_block,
+            else_block: Some(els),
+        } = &f.body.0[0]
+        else {
+            panic!("expected if chain");
+        };
+        assert!(matches!(cond, crate::ir::Expr::Binary { .. }));
+        assert_eq!(then_block.0.len(), 1);
+        assert!(matches!(els.0[0], Stmt::If { .. })); // else-if nesting
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn tagged_switch_parses_as_equality_chain() {
+        let source = "package main\n\nfunc f(x int) string {\n\tswitch x {\n\tcase 1:\n\t\treturn \"one\"\n\tcase 2:\n\t\treturn \"two\"\n\t}\n\treturn \"\"\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::If {
+            cond,
+            else_block: Some(els),
+            ..
+        } = &f.body.0[0]
+        else {
+            panic!("expected if chain");
+        };
+        assert!(matches!(
+            cond,
+            crate::ir::Expr::Binary {
+                op: crate::ir::BinOp::Eq,
+                ..
+            }
+        ));
+        assert!(matches!(els.0[0], Stmt::If { .. }));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn multi_expr_case_parses_as_or_chain() {
+        let source = "package main\n\nfunc f(x int) int {\n\tswitch x {\n\tcase 1, 2, 3:\n\t\treturn 1\n\tdefault:\n\t\treturn 0\n\t}\n}\n";
+        let (module, diag) = GoParser::new().parse(source).unwrap();
+        let Item::Function(f) = &module.items[0] else {
+            panic!()
+        };
+        let Stmt::If { cond, .. } = &f.body.0[0] else {
+            panic!()
+        };
+        // (x = 1 OR x = 2) OR x = 3 — any nested Binary{Or} shape accepted
+        assert!(matches!(
+            cond,
+            crate::ir::Expr::Binary {
+                op: crate::ir::BinOp::Or,
+                ..
+            }
+        ));
+        assert_eq!(diag.total(), 0);
+    }
+
+    #[test]
+    fn fallthrough_switch_stays_raw() {
+        let source = "package main\n\nfunc f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\tfallthrough\n\tcase 2:\n\t\treturn 2\n\t}\n\treturn 0\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
         assert_eq!(diag.statements, 1);
-        assert_eq!(diag.sorted_unique_lines(), vec![4]);
+    }
+
+    #[test]
+    fn type_switch_stays_raw() {
+        let source = "package main\n\nfunc f(v interface{}) int {\n\tswitch t := v.(type) {\n\tcase int:\n\t\treturn t\n\t}\n\treturn 0\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
+    }
+
+    #[test]
+    fn select_statement_stays_raw() {
+        let source = "package main\n\nfunc f(a <-chan int, b chan int) {\n\tselect {\n\tcase v := <-a:\n\t\tb <- v\n\t}\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
+    }
+
+    #[test]
+    fn switch_with_initializer_stays_raw() {
+        let source = "package main\n\nfunc f() int {\n\tswitch x := g(); x {\n\tcase 1:\n\t\treturn 1\n\t}\n\treturn 0\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
     }
 }
