@@ -606,3 +606,46 @@ fn go_stdin_with_source_lang() {
         .stdout(contains("FUNCTION double"))
         .stdout(contains("RETURN x * 2"));
 }
+
+#[test]
+fn python_class_file_renders_methods() {
+    let fixture = write_temp_python_file(
+        "class-methods",
+        r#"class Solution:
+    def two_sum(self, nums, target):
+        for i, x in enumerate(nums):
+            g(i)
+        return None
+"#,
+    );
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg(fixture.path())
+        .arg("--pseudo-only")
+        .arg("--lang")
+        .arg("en");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("FUNCTION two_sum"))
+        .stdout(contains("FOR EACH i, x IN nums"))
+        .stderr(contains("warning:").not());
+}
+
+#[test]
+fn go_err_idiom_renders_structured() {
+    let go_source = "package main\n\nfunc f() error {\n\tif err := g(); err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n";
+    let mut cmd = Command::cargo_bin("algosketch").unwrap();
+    cmd.arg("-")
+        .arg("--source-lang")
+        .arg("go")
+        .arg("--pseudo-only")
+        .arg("--lang")
+        .arg("en")
+        .write_stdin(go_source);
+
+    cmd.assert()
+        .success()
+        .stdout(contains("FUNCTION f"))
+        .stdout(contains("IF err ≠ NIL THEN"))
+        .stderr(contains("warning:").not());
+}
