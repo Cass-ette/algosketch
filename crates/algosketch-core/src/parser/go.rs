@@ -1191,4 +1191,18 @@ mod tests {
         let (_, diag) = GoParser::new().parse(source).unwrap();
         assert_eq!(diag.statements, 1);
     }
+
+    #[test]
+    fn select_statement_stays_raw() {
+        let source = "package main\n\nfunc f(a <-chan int, b chan int) {\n\tselect {\n\tcase v := <-a:\n\t\tb <- v\n\t}\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
+    }
+
+    #[test]
+    fn switch_with_initializer_stays_raw() {
+        let source = "package main\n\nfunc f() int {\n\tswitch x := g(); x {\n\tcase 1:\n\t\treturn 1\n\t}\n\treturn 0\n}\n";
+        let (_, diag) = GoParser::new().parse(source).unwrap();
+        assert_eq!(diag.statements, 1);
+    }
 }
