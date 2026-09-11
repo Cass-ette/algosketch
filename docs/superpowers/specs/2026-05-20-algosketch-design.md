@@ -393,8 +393,9 @@ CI: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace`,
 | M4 | Explanation      | Templates_zh/en in; `--explain`, `--lang`, locale auto-detect all work.             |
 | M5 | Polish           | Markdown output, `Raw` fallback warnings, exit codes, full `assert_cmd` suite pass. |
 | M6 | Go + Apache-2.0  | Go parser + fixtures in; 4-language skeleton test green; relicensed.                |
+| M7 | Coverage + distribution | Python classes/enumerate/tuple-for; Go if-init/switch/two-var range; crates.io-ready; v0.2.1. |
 
-All milestones M1–M6 complete; v0.2.0 tagged 2026-09.
+All milestones M1–M7 complete; v0.2.1 tagged 2026-09.
 
 v0.1.0 = M1 through M5. Out-of-scope future tracks:
 
