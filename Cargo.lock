@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "algosketch-cli"
+name = "algosketch"
 version = "0.2.0"
 dependencies = [
  "algosketch-core",

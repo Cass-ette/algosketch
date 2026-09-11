@@ -6,6 +6,14 @@
 
 **Status / 状态**: v0.2 — supports a focused subset of algorithm-style Python, Java, C++, and Go code. See [`docs/superpowers/specs/2026-05-20-algosketch-design.md`](docs/superpowers/specs/2026-05-20-algosketch-design.md) for the full design.
 
+## Install / 安装
+
+```bash
+cargo install algosketch
+```
+
+Or build from source: `cargo install --git https://github.com/Cass-ette/algosketch --path crates/algosketch-cli`.
+
 ---
 
 ## English
